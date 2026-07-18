@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Placeholder
+        run: |
+          echo "No application code yet — placeholder until M2 introduces the Spring Boot services; this workflow body is replaced then, the job name \`ci\` is not"
+          exit 0
