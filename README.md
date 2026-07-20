@@ -27,6 +27,20 @@ repo root, with the module name as a build arg
 docker build --build-arg MODULE=gateway -t ghcr.io/adamastorx/gateway:<sha> .
 ```
 
+On every merge to `main`, `.github/workflows/build-publish.yml` builds and
+pushes images for each service in its matrix to
+`ghcr.io/adamastorx/<service>:<commit-sha>` (full SHA only — no `latest`,
+no `main`, no semver) per
+[ADR 0008](https://github.com/AdamastorX/adamastorx/blob/main/docs/adr/0008-container-images-dockerfile-ghcr-sha-tags.md).
+Only `gateway` is in the matrix today; `api` and `workers` join once those
+modules are scaffolded (services#2/#3).
+
+GHCR packages are created **private** by default on first publish via
+`GITHUB_TOKEN` — this is a one-time manual step (repo → Packages →
+package settings → Danger Zone → Change visibility → Public) since it
+can't be set from the workflow. AdamastorX is meant to be open-source, so
+this should be flipped after the first successful publish of each package.
+
 ## Layout
 
 | Dir | Contents |
