@@ -12,12 +12,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Placeholder
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build and test
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+  ci:
+    needs: [build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs succeeded
         run: |
-          echo "No application code yet — placeholder until M2 introduces the Spring Boot services; this workflow body is replaced then, the job name \`ci\` is not"
-          exit 0
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "One or more jobs failed:"
+            echo "  build: ${{ needs.build.result }}"
+            exit 1
+          fi
+          echo "All jobs succeeded."

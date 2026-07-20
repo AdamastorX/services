@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Spring Boot / Java / plugin versions are pinned here, exactly once (ADR 0007). -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.0</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.adamastorx</groupId>
+  <artifactId>services</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>services</name>
+  <description>AdamastorX application services — single multi-module reactor (ADR 0007)</description>
+
+  <modules>
+    <module>gateway</module>
+    <!-- api and workers modules arrive with services#2 and services#3 -->
+  </modules>
+
+  <properties>
+    <java.version>25</java.version>
+  </properties>
+</project>
