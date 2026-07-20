@@ -1,0 +1,45 @@
+name: build-publish
+
+# Post-merge image publish (ADR 0008). Separate concern from `ci.yml`
+# (ADR 0006's PR gate, which only runs `mvnw verify`): this workflow builds
+# and pushes container images and only runs after code lands on `main`, so
+# it never blocks a PR and isn't part of the required `ci` check.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Static list, not dynamic module detection (YAGNI/boring per ADR
+        # 0008): only `gateway` is a real Maven module today, `api` and
+        # `workers` are still empty placeholder dirs (services#2/#3). Add
+        # a service to this list the same day its module is scaffolded.
+        service: [gateway]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: MODULE=${{ matrix.service }}
+          tags: ghcr.io/adamastorx/${{ matrix.service }}:${{ github.sha }}
+          push: true
