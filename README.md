@@ -32,8 +32,8 @@ pushes images for each service in its matrix to
 `ghcr.io/adamastorx/<service>:<commit-sha>` (full SHA only — no `latest`,
 no `main`, no semver) per
 [ADR 0008](https://github.com/AdamastorX/adamastorx/blob/main/docs/adr/0008-container-images-dockerfile-ghcr-sha-tags.md).
-Only `gateway` is in the matrix today; `api` and `workers` join once those
-modules are scaffolded (services#2/#3).
+`gateway` and `api` are in the matrix today; `workers` joins once that
+module is scaffolded (services#3).
 
 GHCR packages are created **private** by default on first publish via
 `GITHUB_TOKEN` — this is a one-time manual step (repo → Packages →
@@ -46,7 +46,7 @@ this should be flipped after the first successful publish of each package.
 | Dir | Contents |
 |---|---|
 | `gateway/` | Entrypoint service, routes external traffic (module) |
-| `api/` | Core business logic, PostgreSQL + Redis backed (module arrives with services#2) |
+| `api/` | Core business logic, PostgreSQL + Redis backed (module) |
 | `workers/` | Kafka consumers, async processing (module arrives with services#3) |
 | `shared/` | Libraries shared across the above — placeholder, extracted only when duplication actually hurts (ADR 0007) |
 
