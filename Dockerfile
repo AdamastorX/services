@@ -38,6 +38,12 @@ RUN ./mvnw --batch-mode --no-transfer-progress -pl "${MODULE}" -am package -Dski
 FROM eclipse-temurin:25-jre-alpine@sha256:28db6fdf60e38945e43d840c0333aeaec66c15943070104f7586fd3c9d1665b0
 ARG MODULE
 
+# This image tag's apk package snapshot (2026-06-22) lags Alpine 3.23's own
+# security repo: Trivy caught libexpat and p11-kit CVEs with fixes already
+# published upstream (CVE-2026-56131/56407/56408, CVE-2026-2100). Rather than
+# wait for Adoptium to republish the tag, pull the fixes in at build time.
+RUN apk update && apk upgrade --no-cache
+
 # Alpine ships busybox's adduser/addgroup, not shadow-utils' useradd.
 RUN addgroup -g 10001 -S app \
  && adduser -S -D -H -u 10001 -G app -s /bin/false app
