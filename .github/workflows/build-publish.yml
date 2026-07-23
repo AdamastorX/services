@@ -1,9 +1,12 @@
 name: build-publish
 
 # Post-merge image publish (ADR 0008). Separate concern from `ci.yml`
-# (ADR 0006's PR gate, which only runs `mvnw verify`): this workflow builds
+# (ADR 0006's PR gate, which runs `mvnw verify` and, since platform#6, a
+# Trivy build+scan of the same image with no push): this workflow builds
 # and pushes container images and only runs after code lands on `main`, so
-# it never blocks a PR and isn't part of the required `ci` check.
+# it never blocks a PR and isn't part of the required `ci` check. No
+# redundant scan here — the PR gate already proved this image clean before
+# merge, so this job trusts that and is pure build+push.
 on:
   push:
     branches: [main]
