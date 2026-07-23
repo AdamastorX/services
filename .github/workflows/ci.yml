@@ -52,6 +52,34 @@ jobs:
           push: false
           load: true
 
+      - name: Smoke-test image boots (platform#6 base-image swap)
+        # Proves the runtime base actually runs the app, not just that it
+        # builds -- relevant right now because the runtime stage moved to
+        # eclipse-temurin:25-jre-alpine (musl) to drop the CVE-carrying
+        # `pebble` binary bundled in the Ubuntu/rockcraft-built variant.
+        run: |
+          set -e
+          docker run -d --name smoke -p 8080:8080 adamastorx/${{ matrix.service }}:pr-${{ github.event.pull_request.number }}
+          up=""
+          for i in $(seq 1 30); do
+            if [ "$(docker inspect -f '{{.State.Running}}' smoke)" != "true" ]; then
+              echo "Container exited early:"
+              docker logs smoke
+              exit 1
+            fi
+            if curl -sf http://localhost:8080/actuator/health/liveness | grep -q '"status":"UP"'; then
+              up=1
+              break
+            fi
+            sleep 1
+          done
+          docker logs smoke
+          docker rm -f smoke
+          if [ -z "$up" ]; then
+            echo "App never reported UP within 30s"
+            exit 1
+          fi
+
       - name: Scan image for critical/high CVEs
         uses: aquasecurity/trivy-action@v0.36.0
         with:
