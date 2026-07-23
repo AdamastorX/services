@@ -9,3 +9,9 @@ management:
       # the Kubernetes probes (services#1 acceptance criteria).
       probes:
         enabled: true
+
+api:
+  # In-cluster Kubernetes Service DNS default (ADR 0010); overridden at
+  # deploy time by the API_SERVICE_URL env var injected via the gateway
+  # Deployment manifest (owned by platform, not services).
+  base-url: ${API_SERVICE_URL:http://api.api.svc.cluster.local}

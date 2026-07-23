@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: api
+
+management:
+  endpoint:
+    health:
+      # Expose /actuator/health/liveness and /actuator/health/readiness for
+      # the Kubernetes probes (same as gateway, services#1).
+      probes:
+        enabled: true

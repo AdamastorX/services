@@ -25,10 +25,10 @@ jobs:
     strategy:
       matrix:
         # Static list, not dynamic module detection (YAGNI/boring per ADR
-        # 0008): only `gateway` is a real Maven module today, `api` and
-        # `workers` are still empty placeholder dirs (services#2/#3). Add
-        # a service to this list the same day its module is scaffolded.
-        service: [gateway]
+        # 0008): `gateway` and `api` are real Maven modules today, `workers`
+        # is still an empty placeholder dir (services#3). Add a service to
+        # this list the same day its module is scaffolded.
+        service: [gateway, api]
     steps:
       - uses: actions/checkout@v7
 

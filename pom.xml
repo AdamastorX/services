@@ -22,7 +22,8 @@
 
   <modules>
     <module>gateway</module>
-    <!-- api and workers modules arrive with services#2 and services#3 -->
+    <module>api</module>
+    <!-- workers module arrives with services#3 -->
   </modules>
 
   <properties>
