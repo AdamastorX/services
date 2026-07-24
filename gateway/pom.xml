@@ -24,6 +24,39 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <!--
+      Traces only (observability#1, ADR 0013) — metrics stay on the
+      existing /actuator/prometheus scrape endpoint rather than routing
+      through the OTel Collector. micrometer-tracing-bridge-otel wires
+      Boot's RestClient/Spring-Kafka observation instrumentation to
+      produce OTel spans; opentelemetry-exporter-otlp ships them via
+      management.otlp.tracing.* (application.yml).
+    -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing-bridge-otel</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+    </dependency>
+    <!--
+      micrometer-tracing-bridge-otel is the client library; Boot 4's
+      tracing autoconfiguration (which actually wires the
+      ObservationRegistry/OTLP span exporter into the context) is split
+      into its own modules, same pattern spring-boot-kafka/-flyway
+      already needed this session — spring-boot-starter-actuator only
+      brings the metrics side (spring-boot-micrometer-metrics)
+      transitively, not this.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
