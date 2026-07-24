@@ -73,6 +73,19 @@
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-database-postgresql</artifactId>
     </dependency>
+    <!--
+      flyway-core is the client library; spring-boot-flyway is Boot 4's
+      (modularised) autoconfiguration for it (FlywayAutoConfiguration),
+      not pulled in transitively by spring-boot-starter-data-jpa or
+      flyway-core themselves — same pattern spring-boot-kafka already
+      needed alongside spring-kafka. Without it, Flyway never runs (no
+      error, no log line at all) and the app boots successfully straight
+      into "relation work_items does not exist" on the first query.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-flyway</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
