@@ -48,6 +48,20 @@ management:
       # workers gets no Kubernetes Service (ADR 0009).
       probes:
         enabled: true
+  otlp:
+    tracing:
+      # In-cluster Kubernetes Service DNS default (observability#1, ADR
+      # 0013); overridden at deploy time by OTEL_EXPORTER_OTLP_ENDPOINT
+      # (platform's concern). Fire-and-forget like the Kafka producer,
+      # not fail-fast like Flyway -- an unreachable Collector shouldn't
+      # block startup.
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://otel-collector.otel.svc.cluster.local:4318/v1/traces}
+  tracing:
+    sampling:
+      # 100%: a single-node dev cluster with low traffic has no cost
+      # reason to sample down, and full sampling is what actually proves
+      # a trace can be followed across gateway/api/workers.
+      probability: 1.0
 
 app:
   kafka:
