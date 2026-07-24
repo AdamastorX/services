@@ -55,9 +55,17 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-jpa</artifactId>
     </dependency>
+    <!--
+      Version pinned above the parent POM's managed 42.7.11: that version
+      carries CVE-2026-54291 (HIGH, SCRAM-SHA-256-PLUS downgrade
+      man-in-the-middle), fixed in 42.7.12 — caught by this PR's own
+      Trivy gate (ADR 0006/platform#6), same as the apk/CVE fixes already
+      applied to the Dockerfile's runtime base.
+    -->
     <dependency>
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
+      <version>42.7.13</version>
       <scope>runtime</scope>
     </dependency>
     <!--
