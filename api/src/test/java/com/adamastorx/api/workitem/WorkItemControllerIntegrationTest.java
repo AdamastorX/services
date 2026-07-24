@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
@@ -21,19 +22,30 @@ import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.client.RestTestClient;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Proves {@code api}'s side of the AC: POSTing to {@code /work-items}
- * publishes a JSON record onto the {@code work-items} topic in the exact
- * wire shape {@code workers} expects (no key, no type header, decodes as
- * {@code WorkItem}) -- against an embedded broker, no live cluster in this
- * sandbox.
+ * Proves both halves of the AC: POSTing to {@code /work-items} persists a
+ * row to a real PostgreSQL (services#4, ADR 0012 -- Testcontainers, not
+ * H2, to avoid a works-in-tests/fails-in-prod SQL-dialect gap; Flyway's
+ * {@code V1__} migration runs for real against it) *and* publishes a JSON
+ * record onto the {@code work-items} topic in the exact wire shape
+ * {@code workers} expects (no key, no type header, decodes as
+ * {@code WorkItem}) -- against an embedded broker, no live cluster in
+ * this sandbox.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EmbeddedKafka(partitions = 3, topics = "work-items")
 @TestPropertySource(properties = "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}")
+@Testcontainers
 @DirtiesContext
 class WorkItemControllerIntegrationTest {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
     @LocalServerPort
     private int port;
@@ -42,7 +54,7 @@ class WorkItemControllerIntegrationTest {
     private EmbeddedKafkaBroker embeddedKafkaBroker;
 
     @Test
-    void postingAWorkItemPublishesItToTheTopic() {
+    void postingAWorkItemPersistsItAndPublishesItToTheTopic() {
         RestTestClient client = RestTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
 
         WorkItem created = client.post()
@@ -58,6 +70,17 @@ class WorkItemControllerIntegrationTest {
 
         assertThat(created).isNotNull();
         assertThat(created.message()).isEqualTo("hello from test");
+
+        WorkItem fetched = client.get()
+                .uri("/work-items/{id}", created.id())
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody(WorkItem.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertThat(fetched).isEqualTo(created);
 
         Map<String, Object> consumerProps =
                 KafkaTestUtils.consumerProps("verify-producer-format", "true", embeddedKafkaBroker);

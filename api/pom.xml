@@ -53,12 +53,76 @@
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <!--
+      Version pinned above the parent POM's managed 42.7.11: that version
+      carries CVE-2026-54291 (HIGH, SCRAM-SHA-256-PLUS downgrade
+      man-in-the-middle), fixed in 42.7.12 — caught by this PR's own
+      Trivy gate (ADR 0006/platform#6), same as the apk/CVE fixes already
+      applied to the Dockerfile's runtime base.
+    -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>42.7.13</version>
+      <scope>runtime</scope>
+    </dependency>
+    <!--
+      Flyway 10+ split database-specific support out of flyway-core into
+      its own artifact (services#4, ADR 0012) — flyway-core alone can't
+      migrate a PostgreSQL database.
+    -->
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <!--
+      flyway-core is the client library; spring-boot-flyway is Boot 4's
+      (modularised) autoconfiguration for it (FlywayAutoConfiguration),
+      not pulled in transitively by spring-boot-starter-data-jpa or
+      flyway-core themselves — same pattern spring-boot-kafka already
+      needed alongside spring-kafka. Without it, Flyway never runs (no
+      error, no log line at all) and the app boots successfully straight
+      into "relation work_items does not exist" on the first query.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-flyway</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.springframework.kafka</groupId>
       <artifactId>spring-kafka-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-testcontainers</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Testcontainers 2.x (Boot 4.1 pins 2.0.5) renamed its artifacts —
+      org.testcontainers:postgresql/junit-jupiter (the 1.x names) no
+      longer exist; it's testcontainers-postgresql/testcontainers-junit-jupiter
+      now.
+    -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
