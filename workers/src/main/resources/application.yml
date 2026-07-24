@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: workers
+  kafka:
+    # In-cluster Kubernetes Service DNS default (mirrors ADR 0010's
+    # api.api.svc.cluster.local pattern); overridden at deploy time by the
+    # KAFKA_BOOTSTRAP_SERVERS env var (platform's concern, ADR 0011's
+    # broker deployment shape).
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka.kafka.svc.cluster.local:9092}
+    consumer:
+      # Consumer group id == spring.application.name (ADR 0011), pinned
+      # here in one place rather than repeated on @KafkaListener.
+      group-id: ${spring.application.name}
+      # Manual immediate ack (set explicitly on the container factory in
+      # WorkItemConsumerConfig -- spring.kafka.listener.ack-mode alone
+      # wasn't reliably propagated in this Boot 4.1 line) commits the
+      # offset only after a record is fully processed -- auto-commit's
+      # time-based commit could advance the offset before processing
+      # finishes, turning a crash into a lost message (at-most-once). This
+      # keeps delivery at-least-once.
+      enable-auto-commit: false
+      # A brand-new consumer group (or one whose committed offsets have
+      # expired) starts from the beginning of the topic rather than
+      # skipping straight to new records -- matches the at-least-once
+      # intent (ADR 0011): don't silently skip data a fresh replica
+      # hasn't seen yet.
+      auto-offset-reset: earliest
+      # Key/value deserializers and the JSON trusted-package/target-type
+      # wiring are set explicitly in WorkItemConsumerConfig (typed
+      # ConsumerFactory<String, WorkItem>) rather than here, for the same
+      # reason api's producer gets a typed KafkaTemplate bean instead of
+      # relying on Boot's untyped Object,Object default.
+    producer:
+      # Used only by KafkaErrorHandlingConfig's DeadLetterPublishingRecoverer
+      # to publish failed records to work-items.DLT -- workers has no other
+      # producer use.
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+
+management:
+  endpoint:
+    health:
+      # Expose /actuator/health/liveness and /actuator/health/readiness for
+      # the Kubernetes probes, exactly like gateway/api (ADR 0011) -- the
+      # embedded servlet container exists only to host this HTTP surface,
+      # workers gets no Kubernetes Service (ADR 0009).
+      probes:
+        enabled: true
+
+app:
+  kafka:
+    work-items-topic: work-items

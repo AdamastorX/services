@@ -34,10 +34,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Static list, mirrors build-publish.yml (ADR 0008): `gateway` and
-        # `api` are real Maven modules today. Add a service here the same
-        # day it's added to build-publish.yml's matrix.
-        service: [gateway, api]
+        # Static list, mirrors build-publish.yml (ADR 0008). Add a service
+        # here the same day it's added to build-publish.yml's matrix.
+        service: [gateway, api, workers]
     steps:
       - uses: actions/checkout@v7
 
