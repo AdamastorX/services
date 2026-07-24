@@ -2,13 +2,14 @@ spring:
   application:
     name: api
   datasource:
-    # In-cluster Kubernetes Service DNS default (mirrors ADR 0010's
-    # api.api.svc.cluster.local / ADR 0011's kafka.kafka.svc.cluster.local
-    # patterns); overridden at deploy time by SPRING_DATASOURCE_URL
-    # (platform's concern, ADR 0012's broker deployment shape). Username
-    # and password get no baked-in default -- unlike a Service DNS name,
-    # a real password has no sane public one.
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgresql.postgresql.svc.cluster.local:5432/api}
+    # In-cluster Kubernetes Service DNS default. Same namespace as this
+    # app (postgresql.api.svc.cluster.local), not its own -- Postgres
+    # has exactly one consumer here, unlike Kafka's two, and its Secret
+    # can't be read via secretKeyRef across namespaces (ADR 0012).
+    # Overridden at deploy time by SPRING_DATASOURCE_URL (platform's
+    # concern). Username and password get no baked-in default -- unlike
+    # a Service DNS name, a real password has no sane public one.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgresql.api.svc.cluster.local:5432/api}
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
   flyway:
