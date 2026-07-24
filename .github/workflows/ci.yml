@@ -34,10 +34,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Static list, mirrors build-publish.yml (ADR 0008): `gateway` and
-        # `api` are real Maven modules today. Add a service here the same
-        # day it's added to build-publish.yml's matrix.
-        service: [gateway, api]
+        # Static list, mirrors build-publish.yml (ADR 0008). Add a service
+        # here the same day it's added to build-publish.yml's matrix.
+        service: [gateway, api, workers]
     steps:
       - uses: actions/checkout@v7
 
@@ -57,9 +56,19 @@ jobs:
         # builds -- relevant right now because the runtime stage moved to
         # eclipse-temurin:25-jre-alpine (musl) to drop the CVE-carrying
         # `pebble` binary bundled in the Ubuntu/rockcraft-built variant.
+        #
+        # KAFKA_BOOTSTRAP_SERVERS=localhost:9092 (services#3, ADR 0011):
+        # this runner has no Kafka broker and no cluster DNS, so the
+        # default kafka.kafka.svc.cluster.local doesn't resolve at all --
+        # the Kafka client's constructor fails hostname resolution
+        # synchronously and crashes app startup before actuator ever
+        # comes up. localhost always resolves; the client just gets
+        # connection-refused in the background instead, which it retries
+        # without failing the app -- good enough for "does the image
+        # boot", the only thing this step checks.
         run: |
           set -e
-          docker run -d --name smoke -p 8080:8080 adamastorx/${{ matrix.service }}:pr-${{ github.event.pull_request.number }}
+          docker run -d --name smoke -p 8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=localhost:9092 adamastorx/${{ matrix.service }}:pr-${{ github.event.pull_request.number }}
           up=""
           for i in $(seq 1 30); do
             if [ "$(docker inspect -f '{{.State.Running}}' smoke)" != "true" ]; then

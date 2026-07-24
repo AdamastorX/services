@@ -23,7 +23,7 @@
   <modules>
     <module>gateway</module>
     <module>api</module>
-    <!-- workers module arrives with services#3 -->
+    <module>workers</module>
   </modules>
 
   <properties>

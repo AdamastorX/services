@@ -10,20 +10,12 @@
     <version>0.1.0-SNAPSHOT</version>
   </parent>
 
-  <artifactId>api</artifactId>
+  <artifactId>workers</artifactId>
 
-  <name>api</name>
-  <description>Core business-logic service, routed to from gateway</description>
+  <name>workers</name>
+  <description>Kafka consumers, async processing (ADR 0011)</description>
 
   <dependencies>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-webmvc</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-actuator</artifactId>
-    </dependency>
     <dependency>
       <groupId>org.springframework.kafka</groupId>
       <artifactId>spring-kafka</artifactId>
@@ -50,6 +42,21 @@
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!--
+      No business HTTP API here — spring-boot-starter-webmvc is pulled in
+      solely to give actuator an embedded servlet container so
+      /actuator/health/liveness and /readiness exist over HTTP for kubelet
+      probes, exactly like gateway/api (ADR 0011). workers still gets no
+      Kubernetes Service (ADR 0009) — this is for the probe port only.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>

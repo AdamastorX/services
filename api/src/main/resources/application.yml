@@ -1,6 +1,21 @@
 spring:
   application:
     name: api
+  kafka:
+    # In-cluster Kubernetes Service DNS default (mirrors ADR 0010's
+    # api.api.svc.cluster.local pattern); overridden at deploy time by the
+    # KAFKA_BOOTSTRAP_SERVERS env var (platform's concern, ADR 0011's
+    # broker deployment shape).
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka.kafka.svc.cluster.local:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        # Don't stamp the JSON payload with api's WorkItem class name
+        # (spring-kafka's default). Producer and consumer are different
+        # modules with their own WorkItem copy (see workers/README.md) —
+        # they agree on the JSON shape, not a shared Java type.
+        spring.json.add.type.headers: false
 
 management:
   endpoint:
@@ -9,3 +24,10 @@ management:
       # the Kubernetes probes (same as gateway, services#1).
       probes:
         enabled: true
+
+app:
+  kafka:
+    # 3 partitions / RF 1 is a broker-side topic-creation concern (ADR
+    # 0011), not something this producer enforces — see
+    # workers/README.md for the topic's actual configuration.
+    work-items-topic: work-items
