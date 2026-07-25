@@ -1,6 +1,31 @@
 spring:
   application:
     name: workers
+  datasource:
+    # services#25 (ADR 0018): workers' first Postgres connection of any
+    # kind, to the *same* database api already migrates (ADR 0012) -- not
+    # a second, independent Postgres instance. Same in-cluster Service DNS
+    # default as api/application.yml, overridden the same way at deploy
+    # time by SPRING_DATASOURCE_URL.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgresql.api.svc.cluster.local:5432/api}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      # Never let Hibernate create/alter schema from this module -- api's
+      # Flyway history (V2__create_clinvar_tables.sql) is the single owner
+      # of clinvar_release/clinvar_variant_index (see that migration's
+      # header comment and workers/README.md's ClinVar section). This
+      # module only reads/writes rows in already-migrated tables. A
+      # practical consequence stated plainly rather than left implicit:
+      # workers assumes api has already run its Flyway migration by the
+      # time an ingestion actually executes -- true in steady state (the
+      # scheduled trigger is weekly) and true for the manual endpoint in
+      # any environment where api has ever started once, but there is no
+      # explicit startup-order enforcement between the two Deployments.
+      # Ingestion fails loudly (logged + clinvar.ingestion.failures
+      # counter) rather than silently if the tables don't exist yet.
+      ddl-auto: none
   kafka:
     # In-cluster Kubernetes Service DNS default (mirrors ADR 0010's
     # api.api.svc.cluster.local pattern); overridden at deploy time by the
@@ -95,3 +120,26 @@ management:
 app:
   kafka:
     work-items-topic: work-items
+    # services#25/#26 (ADR 0018): published once a ClinVar ingestion is
+    # fully committed (Postgres row committed, filesystem `current`
+    # pointer flipped) -- api's cache-invalidation consumer (services#26)
+    # is this topic's only consumer today. Dot-separated, matching the
+    # event-name convention the issue itself uses, deliberately different
+    # from work-items' hyphenated topic-name style -- no significance
+    # beyond naming taste, Kafka treats both identically.
+    clinvar-ingestion-topic: clinvar.ingestion.completed
+  clinvar:
+    # Shared RWX PVC mount point (platform#35, ADR 0018) -- both api and
+    # workers mount the same volume here. Overridden at deploy time by
+    # CLINVAR_REFDATA_PATH once platform#35 lands; the default matches the
+    # ADR's stated path so local/CI runs against a plain directory need no
+    # override besides pointing this somewhere writable.
+    refdata-path: ${CLINVAR_REFDATA_PATH:/data/refdata/clinvar}
+    source-vcf-url: ${CLINVAR_SOURCE_VCF_URL:https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz}
+    source-tbi-url: ${CLINVAR_SOURCE_TBI_URL:https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz.tbi}
+    # Weekly, Monday 03:00 server time -- ClinVar itself publishes weekly
+    # (ADR 0018); an off-peak hour, not tied to any specific observed
+    # NCBI publish time. Cron, not fixedDelay -- a wall-clock schedule
+    # survives a workers restart without drifting, unlike fixedDelay's
+    # "N hours after the process last started" semantics.
+    ingestion-cron: ${CLINVAR_INGESTION_CRON:0 0 3 * * MON}

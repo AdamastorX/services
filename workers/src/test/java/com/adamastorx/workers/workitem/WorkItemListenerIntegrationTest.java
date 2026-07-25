@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
@@ -24,6 +25,9 @@ import org.springframework.kafka.test.utils.ContainerTestUtils;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Proves the AC: a message produced (here, with the same wire format
@@ -32,12 +36,27 @@ import org.springframework.test.context.TestPropertySource;
  * embedded broker (no live cluster in this sandbox; boring/minimal per
  * repo test conventions -- see workers/README.md for how the multi-replica
  * consumer-group behaviour is proven against a real cluster).
+ *
+ * <p>Now also boots a Testcontainers Postgres (services#25, ADR 0018):
+ * this test is Kafka-only in intent, but {@code WorkersApplication}'s
+ * full context includes {@code spring-boot-starter-data-jpa} as of
+ * ClinVar ingestion, and Hibernate's dialect auto-detection needs a real,
+ * reachable JDBC connection at context-startup time regardless of
+ * whether this particular test ever touches ClinVar code -- found via
+ * this repo's own CI, not assumed. Every full-context {@code
+ * WorkersApplication} test needs Postgres available now, the same way
+ * every {@code api} test already does.
  */
 @SpringBootTest
 @EmbeddedKafka(partitions = 3, topics = "work-items")
 @TestPropertySource(properties = "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}")
+@Testcontainers
 @DirtiesContext
 class WorkItemListenerIntegrationTest {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
     @Autowired
     private EmbeddedKafkaBroker embeddedKafkaBroker;
