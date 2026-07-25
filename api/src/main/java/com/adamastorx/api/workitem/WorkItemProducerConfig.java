@@ -26,6 +26,18 @@ public class WorkItemProducerConfig {
     @Bean
     public KafkaTemplate<String, WorkItem> workItemKafkaTemplate(
             ProducerFactory<String, WorkItem> workItemProducerFactory) {
-        return new KafkaTemplate<>(workItemProducerFactory);
+        KafkaTemplate<String, WorkItem> template = new KafkaTemplate<>(workItemProducerFactory);
+        // Boot's spring.kafka.template.observation-enabled only wires
+        // observation into Boot's own auto-configured KafkaTemplate --
+        // this bean is hand-built (see class javadoc) and bypasses that
+        // autoconfiguration entirely, so it needs enabling directly
+        // (observability#1, ADR 0013). Without this, the send() call
+        // creates no span and doesn't propagate the caller's trace
+        // context into the record's headers -- found by checking
+        // workers' consumer logs and seeing an empty trace-id bracket
+        // despite api's own request-handling span being correctly
+        // populated, not assumed from the framework's docs.
+        template.setObservationEnabled(true);
+        return template;
     }
 }
