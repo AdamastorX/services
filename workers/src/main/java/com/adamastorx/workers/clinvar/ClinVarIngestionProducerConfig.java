@@ -13,9 +13,33 @@ import org.springframework.kafka.core.ProducerFactory;
  * (ADR 0011): Boot's auto-configured template is untyped. This is
  * {@code workers}' first outbound Kafka producer -- until now it has only
  * ever been a consumer ({@code WorkItemConsumerConfig}).
+ *
+ * <p><strong>Also restores the untyped {@code KafkaTemplate<Object, Object>}
+ * bean</strong> ({@link #kafkaTemplate}) that Boot's own
+ * {@code KafkaAutoConfiguration} would otherwise provide. Found the hard
+ * way via this repo's own CI: {@code
+ * @ConditionalOnMissingBean(KafkaTemplate.class)} matches on raw type,
+ * ignoring generics -- the moment this class's own typed {@code
+ * clinVarIngestionKafkaTemplate} bean exists anywhere in {@code workers}'
+ * context, Boot's conditional backs off and stops creating its untyped
+ * one, even though the two beans have unrelated generic parameters.
+ * {@code WorkItemConsumerConfig.errorHandler}'s {@code
+ * DeadLetterPublishingRecoverer} depends on exactly that untyped {@code
+ * KafkaOperations<Object, Object>} bean (it has to be able to republish
+ * *any* failed record type to a DLT, not just {@code WorkItem}s) -- it
+ * broke the moment this class was added, since {@code workers} previously
+ * had zero {@code KafkaTemplate} beans of its own and always got Boot's
+ * default for free. Providing it explicitly here (same bean name Boot
+ * would have used, {@code "kafkaTemplate"}) makes {@code workers} self-
+ * sufficient regardless of how many other typed producers it grows.
  */
 @Configuration
 public class ClinVarIngestionProducerConfig {
+
+    @Bean
+    public KafkaTemplate<Object, Object> kafkaTemplate(KafkaProperties kafkaProperties) {
+        return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(kafkaProperties.buildProducerProperties()));
+    }
 
     @Bean
     public ProducerFactory<String, ClinVarIngestionCompletedEvent> clinVarIngestionProducerFactory(
