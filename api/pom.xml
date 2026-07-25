@@ -25,6 +25,19 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
     <!--
+      Registers /actuator/prometheus itself (observability#2, ADR 0014)
+      — spring-boot-starter-actuator alone brings Micrometer's core but
+      not the Prometheus registry, so this endpoint 404'd until this was
+      added, found deploying the real Prometheus scrape. Exposed over
+      HTTP via management.endpoints.web.exposure.include (application.yml)
+      — Boot doesn't expose it by default even with this dependency
+      present.
+    -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <!--
       Traces only (observability#1, ADR 0013) — metrics stay on the
       existing /actuator/prometheus scrape endpoint rather than routing
       through the OTel Collector. micrometer-tracing-bridge-otel wires
