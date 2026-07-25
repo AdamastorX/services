@@ -1,6 +1,7 @@
 package com.adamastorx.api.clinvar;
 
 import java.nio.file.Path;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -17,6 +18,7 @@ class ClinVarRefdataPaths {
 
     private static final String VCF_FILENAME = "clinvar.vcf.gz";
     private static final String CURRENT_LINK_NAME = "current";
+    private static final String RELEASES_DIR_NAME = "releases";
 
     private final Path root;
 
@@ -33,5 +35,20 @@ class ClinVarRefdataPaths {
      */
     Path currentVcfPath() {
         return root.resolve(CURRENT_LINK_NAME).resolve(VCF_FILENAME);
+    }
+
+    /**
+     * Resolves a <em>specific</em> release's VCF by id, bypassing {@code
+     * current} entirely -- services#26's {@code VariantInvalidationService}
+     * needs both the old and new release's files at once, and {@code
+     * current} only ever points at one of them (the new one, by the time
+     * the invalidation event is even published -- see
+     * {@code workers.clinvar.ClinVarIngestionService}'s ordering). Relies
+     * on {@code workers.clinvar.ClinVarRefdataPaths}' retention policy
+     * keeping the previous release's directory on disk until the next
+     * ingestion -- see that class's javadoc.
+     */
+    Path releaseVcfPath(UUID releaseId) {
+        return root.resolve(RELEASES_DIR_NAME).resolve(releaseId.toString()).resolve(VCF_FILENAME);
     }
 }

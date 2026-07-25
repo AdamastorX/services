@@ -4,6 +4,7 @@ import htsjdk.samtools.util.CloseableIterator;
 import htsjdk.variant.variantcontext.Allele;
 import htsjdk.variant.variantcontext.VariantContext;
 import htsjdk.variant.vcf.VCFFileReader;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
@@ -32,16 +33,28 @@ class ClinVarVcfQueryService {
     }
 
     /**
-     * Queries position {@code (chrom, pos)} against the current release
-     * and returns the record whose REF/ALT exactly match, if any --
-     * ClinVar normalizes one VCF record per allele, so more than one
+     * Queries position {@code (chrom, pos)} against the <em>current</em>
+     * release and returns the record whose REF/ALT exactly match, if any
+     * -- ClinVar normalizes one VCF record per allele, so more than one
      * record can share a position (see {@code fixture-release-1.vcf}'s
      * own real BRCA1 example), and only an exact allele match is the
      * variant the caller actually asked about.
      */
     Optional<VcfHit> query(String chrom, int pos, String ref, String alt) {
+        return query(paths.currentVcfPath(), chrom, pos, ref, alt);
+    }
+
+    /**
+     * Same lookup, against an explicit release's VCF path rather than
+     * whatever {@code current} happens to point at right now --
+     * services#26's {@code VariantInvalidationService} needs this to
+     * compare a specific old release against a specific new one, both of
+     * which may differ from {@code current} by the time invalidation
+     * actually runs.
+     */
+    Optional<VcfHit> query(Path vcfPath, String chrom, int pos, String ref, String alt) {
         String normalizedChrom = chrom.startsWith("chr") ? chrom.substring(3) : chrom;
-        try (VCFFileReader reader = new VCFFileReader(paths.currentVcfPath().toFile(), true);
+        try (VCFFileReader reader = new VCFFileReader(vcfPath.toFile(), true);
                 CloseableIterator<VariantContext> hits = reader.query(normalizedChrom, pos, pos)) {
             while (hits.hasNext()) {
                 VariantContext context = hits.next();
