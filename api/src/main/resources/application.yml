@@ -32,6 +32,13 @@ spring:
         # modules with their own WorkItem copy (see workers/README.md) —
         # they agree on the JSON shape, not a shared Java type.
         spring.json.add.type.headers: false
+    consumer:
+      # services#26 (ADR 0018): api's first Kafka *consumer* -- until now
+      # it has only ever produced (work-items). Same group-id convention
+      # as workers' own consumer (ADR 0011): spring.application.name.
+      group-id: ${spring.application.name}
+      enable-auto-commit: false
+      auto-offset-reset: earliest
   data:
     redis:
       # In-cluster Kubernetes Service DNS default (services#5, ADR 0016) —
@@ -109,6 +116,10 @@ app:
     # 0011), not something this producer enforces — see
     # workers/README.md for the topic's actual configuration.
     work-items-topic: work-items
+    # services#25/#26 (ADR 0018): must match workers' identical property
+    # (workers/application.yml) -- workers is the producer, api is the
+    # consumer (see ClinVarCacheInvalidationConsumerConfig).
+    clinvar-ingestion-topic: clinvar.ingestion.completed
   cache:
     work-items:
       # 5 minutes (services#5, ADR 0016). Not a correctness mechanism —
