@@ -87,6 +87,14 @@ public class WorkItemConsumerConfig {
         // immediate ack (ADR 0011): offset commits synchronously, only
         // after onMessage returns normally -- at-least-once delivery.
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        // Same reasoning as api's WorkItemProducerConfig (observability#1,
+        // ADR 0013): spring.kafka.listener.observation-enabled only
+        // wires observation into Boot's own auto-configured listener
+        // container factory, and this one is hand-built. Without this,
+        // WorkItemListener#onMessage runs with no trace context at all
+        // (an empty trace-id bracket in the logs) even though api's
+        // producer send() correctly attaches one to the record headers.
+        factory.getContainerProperties().setObservationEnabled(true);
         return factory;
     }
 }
