@@ -118,3 +118,17 @@ app:
       # 0016's hypothesis section for the full staleness-tolerance
       # reasoning.
       ttl: PT5M
+    variant-annotation:
+      # 30 minutes, longer than work-items' 5 (services#24, ADR 0018):
+      # unlike work-items, this cache has a real invalidation-on-write
+      # story (services#26) as its correctness mechanism, so TTL here is
+      # purely a memory/key-count hygiene bound with more headroom to
+      # pick a value from -- ClinVar itself only republishes weekly, so
+      # even a much longer TTL would still be "correct", this is just a
+      # reasonable default, not a tuned number.
+      ttl: PT30M
+  clinvar:
+    # Shared RWX PVC mount point (platform#35, ADR 0018) -- same property
+    # name/default as workers/application.yml; api only ever reads
+    # {refdata-path}/current, never writes here.
+    refdata-path: ${CLINVAR_REFDATA_PATH:/data/refdata/clinvar}
