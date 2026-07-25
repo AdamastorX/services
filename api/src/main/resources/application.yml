@@ -32,6 +32,25 @@ spring:
         # modules with their own WorkItem copy (see workers/README.md) —
         # they agree on the JSON shape, not a shared Java type.
         spring.json.add.type.headers: false
+  data:
+    redis:
+      # In-cluster Kubernetes Service DNS default (services#5, ADR 0016) —
+      # same pattern as Postgres/Kafka above. redis-master, not just redis
+      # — the chart's standalone-architecture master Service name
+      # (confirmed by rendering the chart locally, not assumed), overridden
+      # at deploy time by REDIS_HOST. Password gets no baked-in default —
+      # same reasoning as SPRING_DATASOURCE_PASSWORD above, a real
+      # credential has no sane public one — sourced at deploy time from the
+      # chart-generated Secret via REDIS_PASSWORD.
+      host: ${REDIS_HOST:redis-master.api.svc.cluster.local}
+      password: ${REDIS_PASSWORD:}
+      # Short, deliberately: this is what makes "fail open on a Redis
+      # outage" (services#5 AC) actually fail *fast* open rather than hang
+      # the request for Lettuce's much longer defaults before falling
+      # through to PostgreSQL. connect-timeout covers the initial TCP
+      # handshake; timeout covers each command once connected.
+      connect-timeout: 500ms
+      timeout: 500ms
 
 management:
   endpoints:
@@ -90,3 +109,12 @@ app:
     # 0011), not something this producer enforces — see
     # workers/README.md for the topic's actual configuration.
     work-items-topic: work-items
+  cache:
+    work-items:
+      # 5 minutes (services#5, ADR 0016). Not a correctness mechanism —
+      # work_items are immutable once created, so a cached value can never
+      # diverge from PostgreSQL — purely a memory/key-count hygiene bound
+      # so cold entries eventually fall out of Redis on their own. See ADR
+      # 0016's hypothesis section for the full staleness-tolerance
+      # reasoning.
+      ttl: PT5M
