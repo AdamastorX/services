@@ -10,9 +10,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
+import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.client.RestTestClient;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -30,8 +32,20 @@ import org.testcontainers.utility.DockerImageName;
  * <p>No official Testcontainers Redis module exists (ADR 0016, pom.xml
  * comment) — {@code redis} here is a plain {@link GenericContainer} wired
  * via {@link DynamicPropertySource}, not {@code @ServiceConnection}.
+ *
+ * <p>{@code @EmbeddedKafka} + the {@code spring.kafka.bootstrap-servers}
+ * override are needed here too, same as
+ * {@code WorkItemControllerIntegrationTest} — {@code create()} below calls
+ * the real {@code POST /work-items}, which always publishes to Kafka
+ * regardless of this test's actual subject. Without this, the producer
+ * blocks the request thread on metadata resolution against the default
+ * (unreachable in CI) {@code kafka.kafka.svc.cluster.local:9092} for
+ * {@code max.block.ms} (60s) before failing the whole request with a 500 —
+ * found exactly this way, not assumed, the first time this test ran in CI.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@EmbeddedKafka(partitions = 3, topics = "work-items")
+@TestPropertySource(properties = "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}")
 @Testcontainers
 @DirtiesContext
 class WorkItemCacheIntegrationTest {
