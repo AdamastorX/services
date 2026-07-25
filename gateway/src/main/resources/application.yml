@@ -9,23 +9,34 @@ management:
       # the Kubernetes probes (services#1 acceptance criteria).
       probes:
         enabled: true
-  otlp:
+  opentelemetry:
     tracing:
-      # In-cluster Kubernetes Service DNS default (observability#1, ADR
-      # 0013); overridden at deploy time by OTLP_COLLECTOR_ENDPOINT
-      # (platform's concern) -- deliberately NOT named
-      # OTEL_EXPORTER_OTLP_ENDPOINT, which collides with the OTel SDK's
-      # own reserved env var. opentelemetry-exporter-otlp transitively
-      # pulls in the SDK's autoconfigure-spi module, which reads that
-      # name directly and independently of Spring's property system,
-      # treating it as a base URL and appending /v1/traces a second
-      # time -- silently 404ing on /v1/traces/v1/traces. Found by
-      # checking the Collector's own logs when spans never showed up,
-      # not assumed from documentation.
-      #
-      # Fire-and-forget like the Kafka producer, not fail-fast like
-      # Flyway -- an unreachable Collector shouldn't block startup.
-      endpoint: ${OTLP_COLLECTOR_ENDPOINT:http://otel-collector.otel.svc.cluster.local:4318/v1/traces}
+      export:
+        otlp:
+          # In-cluster Kubernetes Service DNS default (observability#1,
+          # ADR 0013); overridden at deploy time by
+          # OTLP_COLLECTOR_ENDPOINT (platform's concern) -- deliberately
+          # NOT named OTEL_EXPORTER_OTLP_ENDPOINT, which collides with
+          # the OTel SDK's own reserved env var. opentelemetry-exporter-
+          # otlp transitively pulls in the SDK's autoconfigure-spi
+          # module, which reads that name directly and independently of
+          # Spring's property system, treating it as a base URL and
+          # appending /v1/traces a second time -- silently 404ing on
+          # /v1/traces/v1/traces. Found by checking the Collector's own
+          # logs when spans never showed up, not assumed from
+          # documentation.
+          #
+          # Property path is management.opentelemetry.tracing.export.otlp.*,
+          # not the older management.otlp.tracing.* -- that one is
+          # deprecated (error level) since Boot 4.0 and doesn't actually
+          # wire up an exporter; binding to it silently does nothing,
+          # also found by checking Boot's own configuration metadata
+          # after spans still didn't show up with the "obvious" property
+          # name.
+          #
+          # Fire-and-forget like the Kafka producer, not fail-fast like
+          # Flyway -- an unreachable Collector shouldn't block startup.
+          endpoint: ${OTLP_COLLECTOR_ENDPOINT:http://otel-collector.otel.svc.cluster.local:4318/v1/traces}
   tracing:
     sampling:
       # 100%: a single-node dev cluster with low traffic has no cost
