@@ -111,16 +111,30 @@ public class ClinVarIngestionService {
         }
 
         LocalDate publishedDate = ClinVarVcfHeaderReader.readPublishedDate(vcfPath);
-        long variantCount = variantIndexBuilder.build(vcfPath, releaseId);
 
         UUID previousReleaseId =
                 activationService.currentActive().map(ClinVarRelease::getReleaseId).orElse(null);
 
-        ClinVarRelease newRelease =
-                new ClinVarRelease(releaseId, sourceVcfUrl.toString(), fileSha256, publishedDate, Instant.now(), variantCount, true);
-        // Postgres commit -- must happen before the filesystem pointer
-        // moves (ADR 0018's ordering requirement, see class javadoc).
-        activationService.activate(newRelease);
+        // Inserted inactive, with a placeholder variant count, *before*
+        // building the variant index -- clinvar_variant_index rows carry
+        // a foreign key to this row's release_id, so it has to already
+        // exist in Postgres by the time ClinVarVariantIndexBuilder starts
+        // inserting (found via this repo's own CI: doing this the other
+        // way round -- indexing first, inserting the release row last --
+        // is a straightforward FK violation, not a race condition).
+        // is_active stays false here, so this is invisible to
+        // findByActiveTrue() and doesn't touch the one-active-row partial
+        // unique index.
+        activationService.insertPending(new ClinVarRelease(
+                releaseId, sourceVcfUrl.toString(), fileSha256, publishedDate, Instant.now(), 0L, false));
+
+        long variantCount = variantIndexBuilder.build(vcfPath, releaseId);
+
+        // Sets the real variant count and flips this release active --
+        // the actual Postgres commit that must happen before the
+        // filesystem pointer moves (ADR 0018's ordering requirement, see
+        // class javadoc).
+        activationService.activate(releaseId, variantCount);
 
         paths.flipCurrent(releaseId);
 

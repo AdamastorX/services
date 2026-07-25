@@ -94,6 +94,10 @@ public class ClinVarRelease {
         return variantCount;
     }
 
+    public void setVariantCount(long variantCount) {
+        this.variantCount = variantCount;
+    }
+
     public boolean isActive() {
         return active;
     }
