@@ -2,6 +2,7 @@ package com.adamastorx.api.clinvar;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -76,15 +77,30 @@ class VariantLookupIntegrationTest {
             new GenericContainer<>(DockerImageName.parse("redis:8.2-alpine")).withExposedPorts(6379);
 
     private static final UUID RELEASE_ID = UUID.randomUUID();
-    private static Path refdataRoot;
+
+    // Created eagerly at class-load time (a static field initializer, not a
+    // @DynamicPropertySource side effect) so it exists before either
+    // @BeforeAll or @DynamicPropertySource run -- JUnit's @BeforeAll fires
+    // on pure JUnit lifecycle, independent of and *before* Spring's context
+    // loading (where @DynamicPropertySource actually gets evaluated) for
+    // the default PER_METHOD lifecycle. Stashing the directory as a side
+    // effect of @DynamicPropertySource (as an earlier version of this test
+    // did) left @BeforeAll reading a still-null field.
+    private static final Path refdataRoot = createRefdataRoot();
+
+    private static Path createRefdataRoot() {
+        try {
+            return Files.createTempDirectory("clinvar-refdata-root");
+        } catch (java.io.IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 
     @DynamicPropertySource
-    static void properties(DynamicPropertyRegistry registry) throws Exception {
+    static void properties(DynamicPropertyRegistry registry) {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
-
-        refdataRoot = Files.createTempDirectory("clinvar-refdata-root");
-        registry.add("app.clinvar.refdata-path", () -> refdataRoot.toString());
+        registry.add("app.clinvar.refdata-path", refdataRoot::toString);
     }
 
     @LocalServerPort
