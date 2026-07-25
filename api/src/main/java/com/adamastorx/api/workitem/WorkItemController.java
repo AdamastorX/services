@@ -20,6 +20,15 @@ import org.springframework.web.bind.annotation.RestController;
  * then {@code GET} proves the row is actually there. No validation
  * beyond "a message was supplied"; this is still a scaffold/proof, real
  * domain endpoints arrive with a future issue.
+ *
+ * <p>{@code GET /work-items/{id}} is fronted by {@link WorkItemCacheService}
+ * (services#5, ADR 0016) — cache-aside, read path only: a hit skips
+ * PostgreSQL entirely, a miss (including a Redis outage, which the cache
+ * service also reports as an empty {@code Optional}, deliberately
+ * indistinguishable from a plain miss here — see that class's javadoc)
+ * reads PostgreSQL and best-effort fills the cache for next time.
+ * {@code POST}/{@code GET /work-items} (the list) are untouched by this —
+ * see ADR 0016 for why the per-id read was chosen and the list wasn't.
  */
 @RestController
 public class WorkItemController {
@@ -28,9 +37,12 @@ public class WorkItemController {
 
     private final WorkItemProducer producer;
 
-    public WorkItemController(WorkItemJpaRepository repository, WorkItemProducer producer) {
+    private final WorkItemCacheService cache;
+
+    public WorkItemController(WorkItemJpaRepository repository, WorkItemProducer producer, WorkItemCacheService cache) {
         this.repository = repository;
         this.producer = producer;
+        this.cache = cache;
     }
 
     @PostMapping("/work-items")
@@ -45,8 +57,15 @@ public class WorkItemController {
 
     @GetMapping("/work-items/{id}")
     public ResponseEntity<WorkItem> get(@PathVariable UUID id) {
-        return repository.findById(id).map(entity -> ResponseEntity.ok(toWorkItem(entity)))
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        return cache.get(id)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> repository.findById(id)
+                        .map(WorkItemController::toWorkItem)
+                        .map(workItem -> {
+                            cache.put(id, workItem);
+                            return ResponseEntity.ok(workItem);
+                        })
+                        .orElseGet(() -> ResponseEntity.notFound().build()));
     }
 
     @GetMapping("/work-items")

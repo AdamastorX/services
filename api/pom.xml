@@ -136,6 +136,20 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-flyway</artifactId>
     </dependency>
+    <!--
+      services#5 (ADR 0016). Unlike spring-kafka/flyway-core, this starter's
+      own POM already declares spring-boot-data-redis (Boot 4.1's
+      modularised autoconfiguration for it) as a direct compile dependency
+      — confirmed by reading the starter's published POM, not assumed from
+      the Kafka/Flyway precedent — so, unlike those two, no second
+      artifact is needed here for the autoconfiguration to actually
+      activate. Brings spring-data-redis + lettuce-core (the client)
+      transitively too.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
@@ -165,6 +179,22 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      Redis has no official org.testcontainers:testcontainers-redis module
+      (confirmed via Maven Central search — no such artifact exists), and
+      spring-boot-testcontainers ships no RedisContainerConnectionDetailsFactory
+      either (checked its jar directly), unlike JDBC/Postgres's built-in
+      @ServiceConnection support. The third-party com.redis:testcontainers-redis
+      artifact would restore @ServiceConnection convenience but isn't worth
+      a new dependency for one test class — plain GenericContainer here
+      (testcontainers-core) plus @DynamicPropertySource wiring in the test
+      itself is a few extra lines, no new dependency.
+    -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
