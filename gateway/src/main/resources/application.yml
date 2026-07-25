@@ -3,6 +3,15 @@ spring:
     name: gateway
 
 management:
+  endpoints:
+    web:
+      exposure:
+        # health (default) + prometheus: Boot's actuator does NOT expose
+        # /actuator/prometheus by itself even with micrometer-registry-
+        # prometheus on the classpath (observability#2, ADR 0014) --
+        # found deploying this for real, Prometheus's scrape returned a
+        # 404 until this was added explicitly.
+        include: health,prometheus
   endpoint:
     health:
       # Expose /actuator/health/liveness and /actuator/health/readiness for
