@@ -23,40 +23,27 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * Proves the hit/miss half of services#5's AC (ADR 0016): a first
- * {@code GET /work-items/{id}} misses and fills the cache, a second hits —
- * against the real Micrometer counter, not the implementation's say-so.
- *
- * <p>The Redis-outage half lives in
- * {@link WorkItemCacheOutageIntegrationTest} instead, deliberately its own
- * test class with its own Testcontainers/Spring context rather than a
- * second {@code @Test} method here: that test calls {@code redis.stop()}
- * on its container, which — sharing a class-level static container and
- * context (the default {@code @DirtiesContext} class mode is
- * {@code AFTER_CLASS}, not {@code AFTER_EACH_TEST_METHOD}) — would leave
- * Redis dead for whichever other {@code @Test} method in the same class
- * happened to run after it. Found exactly this way in CI: JUnit's default
- * (unordered) method order ran the outage test first, and this test's own
- * hit/miss assertions then failed against a cache that was already down,
- * not a logic bug in the caching code itself. Splitting into two classes
- * removes the shared mutable state instead of pinning method order with
- * {@code @Order}, which would fix today's flake but not the next one this
- * shape of dependency would eventually cause.
+ * Proves the actual hard requirement in services#5's AC (ADR 0016): a
+ * Redis outage fails the read <em>open</em> to PostgreSQL, not the
+ * request. Its own test class, own Testcontainers/Spring context,
+ * deliberately separate from {@link WorkItemCacheIntegrationTest} — this
+ * test kills its Redis container on purpose (irreversibly, for the rest
+ * of this class's lifetime) to prove the outage path, so it cannot safely
+ * share a container/context with any test that expects a working cache
+ * afterwards. See that class's javadoc for how sharing one class caused
+ * exactly that failure in CI the first time this was written.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EmbeddedKafka(partitions = 3, topics = "work-items")
 @TestPropertySource(properties = "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}")
 @Testcontainers
 @DirtiesContext
-class WorkItemCacheIntegrationTest {
+class WorkItemCacheOutageIntegrationTest {
 
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
-    // No official Testcontainers module for Redis (ADR 0016, pom.xml
-    // comment) -- plain GenericContainer + @DynamicPropertySource instead
-    // of @ServiceConnection.
     @Container
     static GenericContainer<?> redis =
             new GenericContainer<>(DockerImageName.parse("redis:8.2-alpine")).withExposedPorts(6379);
@@ -74,30 +61,29 @@ class WorkItemCacheIntegrationTest {
     private MeterRegistry meterRegistry;
 
     @Test
-    void firstReadIsAMissSecondReadIsAHit() {
+    void redisOutageFailsOpenToPostgresInsteadOfFailingTheRequest() {
         RestTestClient client = RestTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
-        WorkItem created = create(client, "hello cache");
+        WorkItem created = create(client, "survives an outage");
 
-        double missesBefore = counter("miss");
-        double hitsBefore = counter("hit");
+        // Warm/confirm the normal path first.
+        client.get().uri("/work-items/{id}", created.id()).exchange().expectStatus().isOk();
 
-        client.get()
+        double errorsBefore = counter("error");
+        redis.stop();
+
+        // The read must still succeed -- served from PostgreSQL, not from
+        // a dead cache -- this is the actual AC, not a health check.
+        WorkItem fetched = client.get()
                 .uri("/work-items/{id}", created.id())
                 .exchange()
                 .expectStatus()
                 .isOk()
                 .expectBody(WorkItem.class)
-                .isEqualTo(created);
-        client.get()
-                .uri("/work-items/{id}", created.id())
-                .exchange()
-                .expectStatus()
-                .isOk()
-                .expectBody(WorkItem.class)
-                .isEqualTo(created);
+                .returnResult()
+                .getResponseBody();
 
-        assertThat(counter("miss")).isEqualTo(missesBefore + 1);
-        assertThat(counter("hit")).isEqualTo(hitsBefore + 1);
+        assertThat(fetched).isEqualTo(created);
+        assertThat(counter("error")).isGreaterThan(errorsBefore);
     }
 
     private static WorkItem create(RestTestClient client, String message) {
