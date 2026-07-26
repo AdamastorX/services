@@ -75,6 +75,18 @@ management:
       # the Kubernetes probes (same as gateway, services#1).
       probes:
         enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # ADR 0017's named, deliberately-deferred gap, closed here
+        # (observability#15, ADR 0020) -- same reasoning as gateway's
+        # application.yml: without this, http.server.requests only ever
+        # exposes _sum/_count/_max on /actuator/prometheus, no _bucket
+        # series, no real histogram_quantile(0.95, ...). Boot's own
+        # auto-configured HTTP server instrumentation, so a plain
+        # property reaches it -- verified against a real running
+        # instance's /actuator/prometheus output, not assumed.
+        http.server.requests: true
   opentelemetry:
     tracing:
       export:
