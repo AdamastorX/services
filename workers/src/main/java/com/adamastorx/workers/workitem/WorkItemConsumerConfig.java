@@ -1,5 +1,10 @@
 package com.adamastorx.workers.workitem;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
 import org.springframework.context.annotation.Bean;
@@ -68,12 +73,58 @@ public class WorkItemConsumerConfig {
         return new DefaultErrorHandler(recoverer, backOff);
     }
 
+    /**
+     * ADR 0020 (observability#15): the workers' saturation panel has stood
+     * in on a thread-pool-usage proxy since ADR 0017 because Boot's
+     * auto-configured Kafka metrics binder ({@code KafkaMetricsAutoConfiguration})
+     * only registers {@link KafkaClientMetrics} against Boot's own
+     * auto-configured {@code ConsumerFactory} bean -- the same "hand-built
+     * beans bypass Boot's auto-config" gotcha already hit for
+     * {@code spring.kafka.listener.observation-enabled}
+     * (docs/SESSION_STATE.md), just for a different property/binder pair
+     * this time. {@code workItemConsumerFactory} below is hand-built (ADR
+     * 0011), so that auto-config never sees it and never binds a real
+     * {@code kafka.consumer.*} (records-lag included) meter for it.
+     *
+     * <p>Fix shape, per ADR 0020: bind {@link KafkaClientMetrics} directly
+     * against the actual {@link Consumer} instance(s) this factory
+     * produces, not a property that assumes an auto-configured bean
+     * underneath. {@link ConsumerFactory.Listener#consumerAdded} is the
+     * hook Spring Kafka itself offers for exactly this -- it fires once
+     * per real {@code Consumer} the container creates (after the consumer
+     * is fully constructed, so {@code consumer.metrics()} already has
+     * entries), which is when this can actually bind. Verified against a
+     * live consumer (see WorkersMetricsHistogramTest): a real
+     * {@code kafka_consumer_fetch_manager_records_lag} (and related
+     * {@code kafka_consumer_*}) series appears on /actuator/prometheus
+     * after this wiring, not a thread-pool-usage stand-in.
+     */
     @Bean
-    public ConsumerFactory<String, WorkItem> workItemConsumerFactory(KafkaProperties kafkaProperties) {
+    public ConsumerFactory<String, WorkItem> workItemConsumerFactory(
+            KafkaProperties kafkaProperties, MeterRegistry meterRegistry) {
         JsonDeserializer<WorkItem> valueDeserializer = new JsonDeserializer<>(WorkItem.class, false);
         valueDeserializer.addTrustedPackages(WORK_ITEM_PACKAGE);
-        return new DefaultKafkaConsumerFactory<>(
+        DefaultKafkaConsumerFactory<String, WorkItem> factory = new DefaultKafkaConsumerFactory<>(
                 kafkaProperties.buildConsumerProperties(), new StringDeserializer(), valueDeserializer);
+
+        Map<String, KafkaClientMetrics> boundMetricsByConsumerId = new ConcurrentHashMap<>();
+        factory.addListener(new ConsumerFactory.Listener<>() {
+            @Override
+            public void consumerAdded(String id, Consumer<String, WorkItem> consumer) {
+                KafkaClientMetrics metrics = new KafkaClientMetrics(consumer);
+                metrics.bindTo(meterRegistry);
+                boundMetricsByConsumerId.put(id, metrics);
+            }
+
+            @Override
+            public void consumerRemoved(String id, Consumer<String, WorkItem> consumer) {
+                KafkaClientMetrics metrics = boundMetricsByConsumerId.remove(id);
+                if (metrics != null) {
+                    metrics.close();
+                }
+            }
+        });
+        return factory;
     }
 
     @Bean

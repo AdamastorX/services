@@ -57,6 +57,39 @@ management:
       # workers gets no Kubernetes Service (ADR 0009).
       probes:
         enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # ADR 0017's named, deliberately-deferred gap, closed here
+        # (observability#15, ADR 0020). Two different meters, two
+        # different reasons this property alone is enough for both:
+        #
+        # http.server.requests: same as gateway/api -- Boot's own
+        # auto-configured HTTP instrumentation, a plain property reaches
+        # it.
+        #
+        # spring.kafka.listener: this is the timer WorkItemListener's
+        # @KafkaListener invocation produces via Micrometer Observation.
+        # WorkItemConsumerConfig's listener container factory is
+        # hand-built (ADR 0011) -- the same reason
+        # spring.kafka.listener.observation-enabled was a silent no-op
+        # here (docs/SESSION_STATE.md) -- but that property only
+        # controls whether the observation fires at all, and
+        # WorkItemConsumerConfig already turns it on directly via
+        # ContainerProperties#setObservationEnabled(true). Once an
+        # Observation-backed Timer named spring.kafka.listener exists in
+        # the registry -- built or not -- this percentiles-histogram
+        # property is a MeterFilter keyed on meter *name*, applied by
+        # MetricsAutoConfiguration to the whole registry regardless of
+        # which bean produced the meter, so it does not need the same
+        # explicit-bean workaround. Confirmed, not assumed: a real
+        # spring_kafka_listener_seconds_bucket series was checked to
+        # actually appear on /actuator/prometheus after this change (see
+        # WorkersMetricsHistogramTest) -- if it hadn't, the fallback
+        # would have been a MeterFilter bean equivalent to
+        # WorkItemConsumerConfig's existing setObservationEnabled call.
+        http.server.requests: true
+        spring.kafka.listener: true
   opentelemetry:
     tracing:
       export:

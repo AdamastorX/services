@@ -18,6 +18,23 @@ management:
       # the Kubernetes probes (services#1 acceptance criteria).
       probes:
         enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # ADR 0017's named, deliberately-deferred gap, closed here
+        # (observability#15, ADR 0020): without this, the
+        # http.server.requests Timer only ever exposes _sum/_count/_max
+        # on /actuator/prometheus -- no _bucket series, so no real
+        # histogram_quantile(0.95, ...) is possible on the golden-signal
+        # dashboard, only the average (sum/count) or max it shipped with.
+        # This is Boot's own auto-configured HTTP server instrumentation
+        # (a servlet Filter wired by WebMvcObservationAutoConfiguration),
+        # so a plain property is enough here -- verified by an actual
+        # request against a running instance and reading
+        # /actuator/prometheus afterwards for a real *_bucket line, not
+        # assumed from the Micrometer docs alone (see
+        # GatewayMetricsHistogramTest).
+        http.server.requests: true
   opentelemetry:
     tracing:
       export:
