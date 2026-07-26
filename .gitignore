@@ -4,3 +4,10 @@
 .vscode/
 target/
 .claude/worktrees/
+
+# clinvar-service (ADR 0019, Python)
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
