@@ -1,7 +1,7 @@
 # services
 
-The application layer of AdamastorX: gateway, API, workers, shared
-libraries. Spring Boot, wired to Kafka/PostgreSQL/Redis per
+The application layer of AdamastorX: API, workers, shared libraries.
+Spring Boot, wired to Kafka/PostgreSQL/Redis per
 `.claude/PROJECT.md` in `adamastorx`. Infrastructure to run this lives in
 [platform](https://github.com/AdamastorX/platform).
 
@@ -24,7 +24,7 @@ repo root, with the module name as a build arg
 ([ADR 0008](https://github.com/AdamastorX/adamastorx/blob/main/docs/adr/0008-container-images-dockerfile-ghcr-sha-tags.md)):
 
 ```sh
-docker build --build-arg MODULE=gateway -t ghcr.io/adamastorx/gateway:<sha> .
+docker build --build-arg MODULE=api -t ghcr.io/adamastorx/api:<sha> .
 ```
 
 On every merge to `main`, `.github/workflows/build-publish.yml` builds and
@@ -32,7 +32,7 @@ pushes images for each service in its matrix to
 `ghcr.io/adamastorx/<service>:<commit-sha>` (full SHA only — no `latest`,
 no `main`, no semver) per
 [ADR 0008](https://github.com/AdamastorX/adamastorx/blob/main/docs/adr/0008-container-images-dockerfile-ghcr-sha-tags.md).
-`gateway`, `api`, and `workers` are all in the matrix.
+`api` and `workers` are both in the matrix.
 
 GHCR packages are created **private** by default on first publish via
 `GITHUB_TOKEN` — this is a one-time manual step (repo → Packages →
@@ -44,8 +44,7 @@ this should be flipped after the first successful publish of each package.
 
 | Dir | Contents |
 |---|---|
-| `gateway/` | Entrypoint service, routes external traffic (module) |
-| `api/` | Core business logic, PostgreSQL + Redis backed (module) |
+| `api/` | Core business logic, PostgreSQL + Redis backed, its own public Ingress (module) |
 | `workers/` | Kafka consumers, async processing |
 | `shared/` | Libraries shared across the above — placeholder, extracted only when duplication actually hurts (ADR 0007) |
 

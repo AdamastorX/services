@@ -14,8 +14,9 @@ import org.springframework.web.util.UriBuilder;
 
 /**
  * HTTP client for {@code clinvar-service}'s internal lookup endpoint (ADR
- * 0019). Same pattern {@code gateway.ApiForwardingController} already
- * uses for {@code gateway} -&gt; {@code api} (ADR 0010) -- a plain
+ * 0019). Same pattern {@code gateway.ApiForwardingController} used for
+ * {@code gateway} -&gt; {@code api} (ADR 0010, {@code gateway} itself
+ * removed under ADR 0021) -- a plain
  * blocking Spring {@link RestClient} (already on the classpath via
  * spring-boot-starter-webmvc, no new dependency), built once from a base
  * URL sourced from an env var, applied here to a new internal boundary

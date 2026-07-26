@@ -13,7 +13,7 @@
   <artifactId>api</artifactId>
 
   <name>api</name>
-  <description>Core business-logic service, routed to from gateway</description>
+  <description>Core business-logic service, its own public Ingress (ADR 0021)</description>
 
   <dependencies>
     <dependency>

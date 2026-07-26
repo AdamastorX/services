@@ -26,8 +26,9 @@ directly, in any way:
 - `VariantLookupService` calls `clinvar-service`'s internal `GET
   /internal/clinvar/lookup` endpoint over HTTP (`ClinVarServiceClient`, a
   plain Spring `RestClient` — the exact pattern `gateway.
-  ApiForwardingController` already uses for `gateway` → `api`, ADR 0010,
-  applied to this new internal boundary). Base URL from
+  ApiForwardingController` used for `gateway` → `api`, ADR 0010 (`gateway`
+  itself removed under ADR 0021), applied to this new internal boundary).
+  Base URL from
   `CLINVAR_SERVICE_URL` (`clinvar-service.base-url` in
   `application.yml`), defaulting to the in-cluster Service DNS name
   `clinvar-service.clinvar.svc.cluster.local`.
