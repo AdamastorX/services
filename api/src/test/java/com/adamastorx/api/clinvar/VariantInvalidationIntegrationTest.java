@@ -4,20 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import io.micrometer.core.instrument.MeterRegistry;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.serializer.JsonSerializer;
@@ -28,7 +24,6 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.web.servlet.client.RestTestClient;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -36,33 +31,35 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * Proves services#26's AC end to end (ADR 0018): a seeded stale Redis
- * entry (release N's classification, "Uncertain_significance") is
- * evicted immediately after a real {@code clinvar.ingestion.completed}
- * Kafka event announces release N+1 (a deliberately constructed fixture
- * pair where the same coordinate's classification flips to "Pathogenic",
- * not real historical ClinVar data -- see {@code
- * fixture-invalidation-release-n.vcf}/{@code -n2.vcf}), verified via the
- * real {@code cache.invalidations} counter read off {@code
- * MeterRegistry} (the same registry backing {@code /actuator/prometheus},
- * not a mock), a live Redis check, and a subsequent lookup that
- * repopulates the cache with the new classification and new
- * {@code clinvarReleaseId}.
+ * Proves cache invalidation's AC end to end (ADR 0019): a seeded stale
+ * Redis entry is evicted after a real {@code clinvar.ingestion.completed}
+ * event names its key in {@code changedKeys}, verified via the real
+ * {@code cache.invalidations} counter read off {@code MeterRegistry} (the
+ * same registry backing {@code /actuator/prometheus}, not a mock) and a
+ * live Redis check.
+ *
+ * <p>Drastically simpler than services#26's original version (ADR 0018):
+ * that test seeded two whole bgzipped/tabix-indexed VCF fixture releases
+ * on disk plus matching {@code clinvar_release} Postgres rows so {@code
+ * VariantInvalidationService} could diff them itself. Under ADR 0019,
+ * {@code clinvar-service} has already computed that diff by the time this
+ * event is published -- {@code changedKeys} names the exact Redis key to
+ * delete, so this test only needs to seed that one key directly in Redis
+ * and publish the event; no fixture VCFs, no Postgres seeding, no
+ * filesystem {@code current}/{@code releases} layout at all.
  *
  * <p>The event is sent over a real embedded Kafka broker in the exact
- * wire format {@code workers} actually produces (JSON, no type headers)
+ * wire format {@code clinvar-service} produces (JSON, no type headers)
  * and consumed by the real {@code ClinVarCacheInvalidationListener} --
  * this test never calls {@code VariantInvalidationService} directly.
  *
- * <p>Seeding lives in {@code @BeforeEach}, not a non-static
- * {@code @TestInstance(PER_CLASS) @BeforeAll} -- that combination breaks
+ * <p>Seeding lives in {@code @BeforeEach}, not a non-static {@code
+ * @TestInstance(PER_CLASS)} {@code @BeforeAll} -- that combination breaks
  * {@code @Testcontainers}/{@code @DynamicPropertySource} ordering (see
  * {@code VariantLookupIntegrationTest}'s javadoc for the full mechanism);
  * this test only has one {@code @Test} method, so {@code @BeforeEach}
  * running "once" is already the natural outcome, no idempotency guard
- * needed. {@code refdataRoot} is created in a static field initializer,
- * not as a {@code @DynamicPropertySource} side effect, for the same
- * reason.
+ * needed.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EmbeddedKafka(partitions = 1, topics = {"work-items", "clinvar.ingestion.completed"})
@@ -83,28 +80,11 @@ class VariantInvalidationIntegrationTest {
     private static final UUID RELEASE_N2 = UUID.randomUUID();
     private static final String CACHE_KEY = "variantAnnotation:7:117559600:C:T";
 
-    private static final Path refdataRoot = createRefdataRoot();
-
-    private static Path createRefdataRoot() {
-        try {
-            return Files.createTempDirectory("clinvar-invalidation-refdata");
-        } catch (java.io.IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
     @DynamicPropertySource
-    static void properties(DynamicPropertyRegistry registry) {
+    static void redisProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
-        registry.add("app.clinvar.refdata-path", refdataRoot::toString);
     }
-
-    @LocalServerPort
-    private int port;
-
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private RedisTemplate<String, VariantAnnotation> variantAnnotationRedisTemplate;
@@ -115,62 +95,12 @@ class VariantInvalidationIntegrationTest {
     @Autowired
     private EmbeddedKafkaBroker embeddedKafkaBroker;
 
-    private RestTestClient client;
-
     @BeforeEach
-    void seedReleasesFixturesAndCache() throws Exception {
-        // Both releases' files on disk, exactly as workers' retention
-        // policy would leave them after ingesting N+1 (see
-        // workers.clinvar.ClinVarRefdataPaths' pruneOtherThan javadoc).
-        ClinVarFixtureSupport.bgzipAndIndex(
-                "clinvar/fixture-invalidation-release-n.vcf", releaseDir(RELEASE_N));
-        ClinVarFixtureSupport.bgzipAndIndex(
-                "clinvar/fixture-invalidation-release-n2.vcf", releaseDir(RELEASE_N2));
-        // `current` -> release N+1's directory, exactly as workers'
-        // ClinVarRefdataPaths.flipCurrent would have already done by the
-        // time this event is published (ADR 0018's ordering).
-        copyDirectory(releaseDir(RELEASE_N2), refdataRoot.resolve("current"));
-
-        insertRelease(RELEASE_N, "2026-06-01", false);
-        insertRelease(RELEASE_N2, "2026-07-06", true);
-
+    void seedStaleCacheEntry() {
         VariantAnnotation staleAnnotation = new VariantAnnotation(
                 "7", 117559600, "C", "T", "rs900000001", "Uncertain_significance",
                 "criteria_provided,_single_submitter", null, RELEASE_N.toString());
         variantAnnotationRedisTemplate.opsForValue().set(CACHE_KEY, staleAnnotation);
-    }
-
-    private Path releaseDir(UUID releaseId) {
-        return refdataRoot.resolve("releases").resolve(releaseId.toString());
-    }
-
-    private static void copyDirectory(Path source, Path target) throws Exception {
-        Files.createDirectories(target);
-        try (var stream = Files.list(source)) {
-            for (Path file : stream.toList()) {
-                Files.copy(file, target.resolve(file.getFileName()));
-            }
-        }
-    }
-
-    private void insertRelease(UUID releaseId, String publishedDate, boolean active) {
-        jdbcTemplate.update(
-                "INSERT INTO clinvar_release "
-                        + "(release_id, source_url, file_sha256, published_date, variant_count, is_active) "
-                        + "VALUES (?, ?, ?, ?, ?, ?)",
-                releaseId,
-                "https://example.invalid/fixture",
-                "0".repeat(64),
-                java.sql.Date.valueOf(publishedDate),
-                1L,
-                active);
-    }
-
-    private RestTestClient client() {
-        if (client == null) {
-            client = RestTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
-        }
-        return client;
     }
 
     private double invalidationCounter() {
@@ -183,30 +113,17 @@ class VariantInvalidationIntegrationTest {
     }
 
     @Test
-    void staleCacheEntryIsEvictedAfterReleaseChangeAndRepopulatesWithNewClassification() throws Exception {
+    void changedKeyIsEvictedAfterIngestionCompletedEventAndInvalidationCounterIncrements() throws Exception {
         double invalidationsBefore = invalidationCounter();
         assertThat(variantAnnotationRedisTemplate.hasKey(CACHE_KEY)).isTrue();
 
         publishIngestionCompletedEvent();
 
         await().atMost(Duration.ofSeconds(20))
-                .untilAsserted(() -> assertThat(variantAnnotationRedisTemplate.hasKey(CACHE_KEY)).isFalse());
+                .untilAsserted(() -> assertThat(variantAnnotationRedisTemplate.hasKey(CACHE_KEY))
+                        .isFalse());
 
         assertThat(invalidationCounter()).isEqualTo(invalidationsBefore + 1);
-
-        VariantAnnotation refreshed = client()
-                .get()
-                .uri("/variants/lookup?chrom=7&pos=117559600&ref=C&alt=T")
-                .exchange()
-                .expectStatus()
-                .isOk()
-                .expectBody(VariantAnnotation.class)
-                .returnResult()
-                .getResponseBody();
-
-        assertThat(refreshed).isNotNull();
-        assertThat(refreshed.clinicalSignificance()).isEqualTo("Pathogenic");
-        assertThat(refreshed.clinvarReleaseId()).isEqualTo(RELEASE_N2.toString());
     }
 
     private void publishIngestionCompletedEvent() throws Exception {
@@ -214,14 +131,19 @@ class VariantInvalidationIntegrationTest {
         producerProps.put(org.apache.kafka.clients.producer.ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
         producerProps.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
 
-        // Publish using this module's own event record (api's copy), same
-        // wire shape as workers' -- see that class's javadoc.
+        // Publish using this module's own event record -- same wire
+        // shape clinvar-service actually produces (ADR 0019).
         DefaultKafkaProducerFactory<String, ClinVarIngestionCompletedEvent> producerFactory =
                 new DefaultKafkaProducerFactory<>(producerProps);
         try {
             KafkaTemplate<String, ClinVarIngestionCompletedEvent> template = new KafkaTemplate<>(producerFactory);
             ClinVarIngestionCompletedEvent event = new ClinVarIngestionCompletedEvent(
-                    RELEASE_N2.toString(), RELEASE_N.toString(), "2026-07-06", 1L, java.time.Instant.now().toString());
+                    RELEASE_N2.toString(),
+                    RELEASE_N.toString(),
+                    "2026-07-06",
+                    1L,
+                    java.time.Instant.now().toString(),
+                    List.of(CACHE_KEY));
             template.send("clinvar.ingestion.completed", event).get(10, java.util.concurrent.TimeUnit.SECONDS);
         } finally {
             producerFactory.destroy();

@@ -1,92 +1,77 @@
 package com.adamastorx.api.clinvar;
 
-import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 
 /**
- * Orchestrates one variant lookup (services#24, ADR 0018): resolve an
- * rsID to coordinates first if that's how the caller asked, then
- * cache-aside around the actual tabix point lookup, stamping the current
- * {@code clinvarReleaseId} into the response either way.
+ * Orchestrates one variant lookup (ADR 0019): cache-aside in front of an
+ * HTTP call to {@code clinvar-service}, rather than the direct
+ * htsjdk/tabix-file and JPA/Postgres access this service used before
+ * (services#24/#26, ADR 0018 -- removed; see the class javadocs of the
+ * types deleted alongside this one for why).
+ *
+ * <p><strong>Coordinate lookups</strong> check the Redis cache first
+ * (exactly as before -- {@link VariantAnnotationCacheService}'s
+ * cache-aside mechanics are unchanged, just fronting a different
+ * upstream now) and only call {@code clinvar-service} on a miss.
+ *
+ * <p><strong>rsID lookups cannot check the cache first</strong>, unlike
+ * before: the cache key is coordinate-based ({@code
+ * variantAnnotation:{chrom}:{pos}:{ref}:{alt}}), and resolving an rsID to
+ * coordinates was previously a cheap local Postgres query
+ * ({@code clinvar_variant_index}) done before the cache check. That index
+ * no longer lives in {@code api} at all under ADR 0019 -- {@code
+ * clinvar-service}'s lookup endpoint resolves rsID to coordinates and the
+ * full annotation in one call, so an rsID lookup always calls {@code
+ * clinvar-service}. The result is still written into the cache under its
+ * resolved coordinate key afterward, so a subsequent coordinate-based
+ * lookup (or a repeat rsID lookup that happens to be preceded by a
+ * coordinate one) still hits.
  */
 @Service
 public class VariantLookupService {
 
-    private final ClinVarVariantIndexRepository variantIndexRepository;
-    private final ClinVarReleaseRepository releaseRepository;
-    private final ClinVarVcfQueryService vcfQueryService;
+    private final ClinVarServiceClient clinVarServiceClient;
     private final VariantAnnotationCacheService cache;
 
-    public VariantLookupService(
-            ClinVarVariantIndexRepository variantIndexRepository,
-            ClinVarReleaseRepository releaseRepository,
-            ClinVarVcfQueryService vcfQueryService,
-            VariantAnnotationCacheService cache) {
-        this.variantIndexRepository = variantIndexRepository;
-        this.releaseRepository = releaseRepository;
-        this.vcfQueryService = vcfQueryService;
+    public VariantLookupService(ClinVarServiceClient clinVarServiceClient, VariantAnnotationCacheService cache) {
+        this.clinVarServiceClient = clinVarServiceClient;
         this.cache = cache;
     }
 
     /** Coordinate-based lookup: {@code (chrom, pos, ref, alt)} given directly. */
     public Optional<VariantAnnotation> lookupByCoordinates(String chrom, int pos, String ref, String alt) {
-        return resolve(chrom, pos, ref, alt);
-    }
-
-    /**
-     * rsID-based lookup: resolves to coordinates via {@code
-     * clinvar_variant_index} first (ADR 0018 -- tabix indexes are
-     * position-based, scanning 250MB per rsID lookup is a non-starter),
-     * then defers to the same coordinate path. More than one candidate
-     * coordinate can exist for a rare rsID (see
-     * {@link ClinVarVariantIndexRepository#findByRsid}'s javadoc); the
-     * first one that actually resolves against the current release wins.
-     */
-    public Optional<VariantAnnotation> lookupByRsid(String rsid) {
-        List<ClinVarVariantIndexEntity> candidates = variantIndexRepository.findByRsid(normalizeRsid(rsid));
-        for (ClinVarVariantIndexEntity candidate : candidates) {
-            Optional<VariantAnnotation> resolved =
-                    resolve(candidate.getChrom(), candidate.getPos(), candidate.getRef(), candidate.getAlt());
-            if (resolved.isPresent()) {
-                return resolved;
-            }
-        }
-        return Optional.empty();
-    }
-
-    private Optional<VariantAnnotation> resolve(String chrom, int pos, String ref, String alt) {
         Optional<VariantAnnotation> cached = cache.get(chrom, pos, ref, alt);
         if (cached.isPresent()) {
             return cached;
         }
 
-        Optional<ClinVarVcfQueryService.VcfHit> hit = vcfQueryService.query(chrom, pos, ref, alt);
-        if (hit.isEmpty()) {
-            return Optional.empty();
-        }
-
-        String currentReleaseId = releaseRepository
-                .findByActiveTrue()
-                .map(release -> release.getReleaseId().toString())
-                .orElse(null);
-
-        VariantAnnotation annotation = new VariantAnnotation(
-                chrom,
-                pos,
-                ref,
-                alt,
-                hit.get().rsid(),
-                hit.get().clinicalSignificance(),
-                hit.get().reviewStatus(),
-                null, // gnomAD allele frequency -- deferred, see VariantAnnotation's javadoc
-                currentReleaseId);
-
-        cache.put(chrom, pos, ref, alt, annotation);
-        return Optional.of(annotation);
+        Optional<VariantAnnotation> fetched =
+                clinVarServiceClient.lookupByCoordinates(chrom, pos, ref, alt).map(VariantLookupService::toAnnotation);
+        fetched.ifPresent(annotation -> cache.put(annotation.chrom(), annotation.pos(), annotation.ref(),
+                annotation.alt(), annotation));
+        return fetched;
     }
 
-    private static String normalizeRsid(String rawRsid) {
-        return "rs" + rawRsid.replaceFirst("(?i)^rs", "");
+    /** rsID-based lookup: resolved entirely by {@code clinvar-service} (see class javadoc). */
+    public Optional<VariantAnnotation> lookupByRsid(String rsid) {
+        Optional<VariantAnnotation> fetched =
+                clinVarServiceClient.lookupByRsid(rsid).map(VariantLookupService::toAnnotation);
+        fetched.ifPresent(annotation -> cache.put(annotation.chrom(), annotation.pos(), annotation.ref(),
+                annotation.alt(), annotation));
+        return fetched;
+    }
+
+    private static VariantAnnotation toAnnotation(ClinVarLookupResponse response) {
+        return new VariantAnnotation(
+                response.chrom(),
+                response.pos(),
+                response.ref(),
+                response.alt(),
+                response.rsid(),
+                response.clinicalSignificance(),
+                response.clinicalReviewStatus(),
+                response.gnomadAlleleFrequency(),
+                response.clinvarReleaseId());
     }
 }
