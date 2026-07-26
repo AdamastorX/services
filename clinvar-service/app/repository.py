@@ -99,17 +99,20 @@ def prune_variant_index_other_than(conn: Connection, release_id: uuid.UUID) -> i
     return deleted
 
 
-def find_coordinates_by_rsid(conn: Connection, rsid: str) -> tuple[str, int, str, str, uuid.UUID] | None:
-    """Resolves an rsID to coordinates via the index table -- tabix indexes
-    are position-based, so this is the only feasible way to answer an
-    rsID lookup without scanning the whole VCF (ADR 0018/0019)."""
+def find_coordinates_by_rsid(conn: Connection, rsid: str) -> list[tuple[str, int, str, str, uuid.UUID]]:
+    """Resolves an rsID to *every* matching coordinate row via the index
+    table -- tabix indexes are position-based, so this is the only
+    feasible way to answer an rsID lookup without scanning the whole VCF
+    (ADR 0018/0019).
+
+    An rsID mapping to more than one allele/position is a real,
+    non-edge-case occurrence in ClinVar's data (backlog #38) -- there is
+    no ``LIMIT 1`` here on purpose. Callers must handle the multi-row
+    case explicitly rather than assume a single result.
+    """
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT chrom, pos, ref, alt, clinvar_release_id "
-            "FROM clinvar_variant_index WHERE rsid = %s LIMIT 1",
+            "SELECT chrom, pos, ref, alt, clinvar_release_id FROM clinvar_variant_index WHERE rsid = %s",
             (rsid,),
         )
-        row = cur.fetchone()
-    if row is None:
-        return None
-    return row
+        return cur.fetchall()

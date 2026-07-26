@@ -60,6 +60,24 @@ Both given, or neither given, is `400 Bad Request`. A partial coordinate
 set (e.g. only `chrom`) is also `400`. No match for the given key is
 `404`.
 
+**Coordinate-form queries are normalized before matching** (backlog #39):
+`ref`/`alt` are trimmed to their minimal shared representation (and `pos`
+adjusted accordingly) before being matched against the tabix-indexed VCF,
+so a differently-represented-but-equivalent indel query (e.g. carrying
+redundant shared flanking bases) still resolves to the record ClinVar
+itself normalized to. This covers trimming only, not full left-alignment
+across a homopolymer/repeat run -- see `app/normalize.py`'s module
+docstring for exactly what's implemented versus deferred and why (this
+service has no reference-genome FASTA to walk).
+
+**An `rsid` can resolve to more than one coordinate row** (backlog #38):
+every matching row is checked against the current release's VCF, not just
+the first one found. Exactly one real match resolves normally. More than
+one real match is a genuinely ambiguous rsID, reported as `409 Conflict`
+naming every candidate `chrom:pos:ref:alt` -- this response shape is a
+single fixed-contract object (see below), so a documented, explicit `409`
+is used instead of a silent pick or an incompatible list response.
+
 A match is `200` with this exact body shape (field names/casing match the
 Java `api`-side `VariantAnnotation` record this replaces):
 

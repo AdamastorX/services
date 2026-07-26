@@ -59,11 +59,13 @@ def test_first_ingestion_populates_tables_and_queryable_tabix(db_conn, refdata_p
     assert active.is_active is True
     assert active.variant_count == 2
 
-    # rsID index populated for both fixture variants.
+    # rsID index populated for both fixture variants. find_coordinates_by_rsid
+    # returns every matching row (backlog #38), not just one -- both of
+    # these rsIDs are unambiguous here, so each resolves to a single-row list.
     resolved = repository.find_coordinates_by_rsid(db_conn, "rs80357906")
-    assert resolved == ("17", 43057062, "T", "TG", release_id)
+    assert resolved == [("17", 43057062, "T", "TG", release_id)]
     resolved2 = repository.find_coordinates_by_rsid(db_conn, "rs80359550")
-    assert resolved2 == ("13", 32340300, "GT", "G", release_id)
+    assert resolved2 == [("13", 32340300, "GT", "G", release_id)]
 
     # current symlink points at a queryable tabix file.
     hit = query(refdata_paths.current_vcf_path(), "17", 43057062, "T", "TG")

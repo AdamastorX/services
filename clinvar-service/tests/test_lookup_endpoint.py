@@ -131,3 +131,80 @@ def test_lookup_400s_when_neither_key_style_given(client):
 def test_lookup_400s_for_partial_coordinates(client):
     response = client.get("/internal/clinvar/lookup", params={"chrom": "17"})
     assert response.status_code == 400
+
+
+def test_lookup_by_unnormalized_coordinates_matches_normalized_form(client):
+    """Backlog #39: a query carrying extra redundant shared context around
+    an indel (not trimmed to ClinVar's own canonical representation) must
+    resolve to the exact same record as the already-normalized query."""
+    normalized = client.get(
+        "/internal/clinvar/lookup", params={"chrom": "13", "pos": 32340300, "ref": "GT", "alt": "G"}
+    )
+    # One extra base of shared right-side context -- not left-aligned/
+    # trimmed the way ClinVar's own VCF represents this deletion.
+    unnormalized = client.get(
+        "/internal/clinvar/lookup", params={"chrom": "13", "pos": 32340300, "ref": "GTA", "alt": "GA"}
+    )
+
+    assert normalized.status_code == 200
+    assert unnormalized.status_code == 200
+    assert unnormalized.json() == normalized.json()
+    assert normalized.json()["rsid"] == "rs80359550"
+
+
+def test_lookup_by_rsid_ambiguous_returns_409_naming_all_candidates(client, postgres_dsn):
+    """Backlog #38: an rsID mapping to more than one real ClinVar record is
+    a genuine ambiguity -- it must be reported loudly (409), never
+    silently resolved to whichever index row happened to come back
+    first."""
+    import psycopg
+
+    with psycopg.connect(postgres_dsn, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT clinvar_release_id FROM clinvar_variant_index WHERE rsid = %s LIMIT 1",
+                ("rs80357906",),
+            )
+            (release_id,) = cur.fetchone()
+            # Seed a second index row for the *same* rsID pointing at the
+            # other real fixture variant -- both now have a real VCF hit.
+            cur.execute(
+                "INSERT INTO clinvar_variant_index (rsid, chrom, pos, ref, alt, clinvar_release_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                ("rs80357906", "13", 32340300, "GT", "G", release_id),
+            )
+
+    response = client.get("/internal/clinvar/lookup", params={"rsid": "rs80357906"})
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "rs80357906" in detail
+    assert "17:43057062:T:TG" in detail
+    assert "13:32340300:GT:G" in detail
+
+
+def test_lookup_by_rsid_with_stale_extra_index_row_still_resolves(client, postgres_dsn):
+    """A second index row for the same rsID that does *not* correspond to a
+    real VCF record (e.g. bogus/stale coordinates) must not turn an
+    otherwise-unambiguous lookup into a false ambiguity -- only rows that
+    resolve to a real ClinVar hit count as candidates."""
+    import psycopg
+
+    with psycopg.connect(postgres_dsn, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT clinvar_release_id FROM clinvar_variant_index WHERE rsid = %s LIMIT 1",
+                ("rs80357906",),
+            )
+            (release_id,) = cur.fetchone()
+            cur.execute(
+                "INSERT INTO clinvar_variant_index (rsid, chrom, pos, ref, alt, clinvar_release_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                ("rs80357906", "1", 999999, "A", "T", release_id),
+            )
+
+    response = client.get("/internal/clinvar/lookup", params={"rsid": "rs80357906"})
+
+    assert response.status_code == 200
+    assert response.json()["chrom"] == "17"
+    assert response.json()["pos"] == 43057062
