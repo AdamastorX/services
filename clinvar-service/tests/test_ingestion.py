@@ -155,3 +155,43 @@ def test_second_ingestion_activates_new_release_and_prunes_old_index_rows(
     assert event.previous_release_id == first_release_id
     assert event.new_release_id == second_release_id
     assert event.changed_keys == ["variantAnnotation:7:117559600:C:T"]
+
+
+def test_overlapping_ingestion_is_rejected_not_run_concurrently(db_conn, refdata_paths, tmp_path):
+    """A real double-trigger (two manual POSTs hitting the endpoint close
+    together) once ran two full VCF scans at the same time in production --
+    nothing enforced only one ingestion in flight. Simulates the second
+    call arriving while the first is still inside its VCF scan, by having
+    the fake downloader itself attempt (and fail) the reentrant call."""
+    source_dir = tmp_path / "source"
+    vcf_gz, tbi = _plain_bgzip_index(FIXTURES_DIR / "fixture-release-1.vcf", source_dir, "release1")
+
+    reentrant_attempt = {}
+
+    class ReentrantDownloader(FakeDownloader):
+        def download(self, url: str, dest: Path) -> str:
+            if not reentrant_attempt:
+                try:
+                    ingestion.ingest(db_conn, refdata_paths, FakeDownloader(source_map=self._source_map), None, url, url)
+                except ingestion.ClinVarIngestionAlreadyRunning as exc:
+                    reentrant_attempt["error"] = exc
+            return super().download(url, dest)
+
+    downloader = ReentrantDownloader(
+        source_map={
+            "https://example.invalid/clinvar.vcf.gz": vcf_gz,
+            "https://example.invalid/clinvar.vcf.gz.tbi": tbi,
+        }
+    )
+
+    ingestion.ingest(
+        db_conn,
+        refdata_paths,
+        downloader,
+        None,
+        "https://example.invalid/clinvar.vcf.gz",
+        "https://example.invalid/clinvar.vcf.gz.tbi",
+    )
+
+    assert "error" in reentrant_attempt
+    assert isinstance(reentrant_attempt["error"], ingestion.ClinVarIngestionAlreadyRunning)
