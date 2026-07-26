@@ -140,18 +140,87 @@ jobs:
           # don't fail the build on those (documented choice, see PR body).
           ignore-unfixed: true
 
+  clinvar_service:
+    # ADR 0019: this project's first non-JVM component -- a parallel job
+    # rather than a branch in `build`/`scan` above, since neither the
+    # toolchain (Python, not Maven) nor the dependency-scan mode (Trivy's
+    # filesystem/Python-dependency mode, not just an image scan) matches
+    # those Java-shaped jobs closely enough to fold in. Mirrors their
+    # *shape* as closely as sensible for a different toolchain: test, then
+    # build+scan the image, all gating the same `ci` merge check.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clinvar-service
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: clinvar-service/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        # No CLINVAR_TEST_DATABASE_URL override here -- lets
+        # tests/conftest.py's testcontainers fallback spin up a real
+        # Postgres container itself (Docker is available on this runner),
+        # the same Testcontainers-based culture the Java side's tests
+        # already use, rather than special-casing CI with a services:
+        # container.
+        run: pytest -q
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image for scanning (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: clinvar-service
+          tags: adamastorx/clinvar-service:pr-${{ github.event.pull_request.number }}
+          push: false
+          load: true
+
+      - name: Scan image for critical/high CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: adamastorx/clinvar-service:pr-${{ github.event.pull_request.number }}
+          scan-type: image
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Scan Python dependencies for CVEs
+        # Filesystem/dependency scan mode (ADR 0019's stated consequence:
+        # "a second dependency-scanning path in CI, Trivy's filesystem/
+        # Python-dependency scan mode, not just the existing JVM image
+        # scan") -- catches a vulnerable pinned package in
+        # requirements.txt even if the image-layer scan above doesn't
+        # flag it for some reason (different Trivy scanners, same tool).
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: clinvar-service
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
   ci:
-    needs: [build, scan]
+    needs: [build, scan, clinvar_service]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded
         run: |
           if [ "${{ needs.build.result }}" != "success" ] \
-            || [ "${{ needs.scan.result }}" != "success" ]; then
+            || [ "${{ needs.scan.result }}" != "success" ] \
+            || [ "${{ needs.clinvar_service.result }}" != "success" ]; then
             echo "One or more jobs failed:"
-            echo "  build: ${{ needs.build.result }}"
-            echo "  scan:  ${{ needs.scan.result }}"
+            echo "  build:           ${{ needs.build.result }}"
+            echo "  scan:            ${{ needs.scan.result }}"
+            echo "  clinvar_service: ${{ needs.clinvar_service.result }}"
             exit 1
           fi
           echo "All jobs succeeded."
