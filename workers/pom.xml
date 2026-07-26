@@ -102,68 +102,6 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
     </dependency>
-    <!--
-      services#25 (ADR 0018): clinvar_release / clinvar_variant_index are
-      persisted by this module — workers' first PVC precedent (ADR 0018)
-      has a Postgres-write counterpart here too, its first database write
-      of any kind. Deliberately NOT paired with flyway-core/spring-boot-
-      flyway the way api's is (compare api/pom.xml) — see
-      V2__create_clinvar_tables.sql's header comment for why schema
-      ownership stays single (api's Flyway history only). hibernate.ddl-
-      auto is set to none in application.yml for the same reason: this
-      module must never attempt to create or alter schema itself.
-    -->
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-data-jpa</artifactId>
-    </dependency>
-    <!--
-      Version pinned above the parent POM's managed default — same
-      CVE-2026-54291 (HIGH, SCRAM-SHA-256-PLUS downgrade MITM) reasoning as
-      api/pom.xml's identical pin, caught by this PR's own Trivy gate.
-    -->
-    <dependency>
-      <groupId>org.postgresql</groupId>
-      <artifactId>postgresql</artifactId>
-      <version>42.7.13</version>
-      <scope>runtime</scope>
-    </dependency>
-    <!--
-      services#25 (ADR 0018): htsjdk, in-process, for tabix-indexing the
-      downloaded ClinVar VCF (ClinVarTabixIndexer) and streaming through it
-      once per ingestion to build clinvar_variant_index
-      (ClinVarVariantIndexBuilder). Current stable release per Maven
-      Central at the time this was added (checked directly, not assumed).
-    -->
-    <dependency>
-      <groupId>com.github.samtools</groupId>
-      <artifactId>htsjdk</artifactId>
-      <version>4.3.0</version>
-    </dependency>
-    <!--
-      htsjdk 4.3.0 transitively pulls org.apache.commons:commons-compress
-      1.26.0 and org.xerial.snappy:snappy-java 1.1.10.5. Neither version
-      carries a known CVE as of this PR (1.26.0 already fixed
-      CVE-2024-25710/CVE-2024-26308; 1.1.10.5 postdates the LZ4-related
-      snappy-java CVEs) — but both are pinned up to their current latest
-      patch release anyway, checked directly against Maven Central rather
-      than left at whatever htsjdk happens to manage, same discipline as
-      the postgresql pin above and api/pom.xml's existing one. Belt-and-
-      suspenders against this PR's own Trivy gate flagging either
-      transitively later.
-    -->
-    <dependency>
-      <groupId>org.apache.commons</groupId>
-      <artifactId>commons-compress</artifactId>
-      <version>1.28.0</version>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.xerial.snappy</groupId>
-      <artifactId>snappy-java</artifactId>
-      <version>1.1.10.7</version>
-      <scope>runtime</scope>
-    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
@@ -172,39 +110,6 @@
     <dependency>
       <groupId>org.springframework.kafka</groupId>
       <artifactId>spring-kafka-test</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-testcontainers</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.testcontainers</groupId>
-      <artifactId>testcontainers-postgresql</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.testcontainers</groupId>
-      <artifactId>testcontainers-junit-jupiter</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <!--
-      Test-scope only — production code never runs Flyway here (see the
-      pom's earlier comment on hibernate.ddl-auto/schema ownership).
-      ClinVarIngestionServiceIntegrationTest migrates its own Testcontainers
-      Postgres directly (a test-scoped mirror of api's
-      V2__create_clinvar_tables.sql) rather than standing up a whole
-      second api Spring context just to get the schema created.
-    -->
-    <dependency>
-      <groupId>org.flywaydb</groupId>
-      <artifactId>flyway-core</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.flywaydb</groupId>
-      <artifactId>flyway-database-postgresql</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
