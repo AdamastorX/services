@@ -16,7 +16,7 @@ from app.ingestion import ingest as run_ingestion
 from app.kafka_producer import IngestionEventProducer
 from app.migrator import run_migrations
 from app.paths import ClinVarRefdataPaths
-from app.routes import admin, lookup
+from app.routes import admin, lookup, metrics
 from app.scheduler import start_scheduler
 from app.telemetry import configure_tracing, instrument_app
 
@@ -75,6 +75,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="clinvar-service", lifespan=lifespan)
     app.include_router(lookup.router)
     app.include_router(admin.router)
+    app.include_router(metrics.router)
     return app
 
 

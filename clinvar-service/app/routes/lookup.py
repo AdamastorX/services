@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app import repository
+from app.metrics import LOOKUP_DURATION_SECONDS
 from app.schemas import VariantAnnotationResponse
 from app.vcf_query import query as vcf_point_query
 
@@ -29,6 +30,24 @@ def lookup(
     ref: str | None = Query(default=None),
     alt: str | None = Query(default=None),
     rsid: str | None = Query(default=None),
+) -> VariantAnnotationResponse:
+    # The raw HTTP-call latency/error rate from api's perspective (ADR
+    # 0020) -- a cache-outcome split is api's own job (ADR 0016's Redis
+    # layer), not this service's. Wraps the whole handler, including the
+    # 400/404 HTTPException paths -- a Histogram context manager records
+    # elapsed time in __exit__ regardless of the exception that triggers
+    # it, so a request's outcome doesn't skip it out of the latency data.
+    with LOOKUP_DURATION_SECONDS.time():
+        return _lookup(request, chrom, pos, ref, alt, rsid)
+
+
+def _lookup(
+    request: Request,
+    chrom: str | None,
+    pos: int | None,
+    ref: str | None,
+    alt: str | None,
+    rsid: str | None,
 ) -> VariantAnnotationResponse:
     by_coordinates = chrom is not None or pos is not None or ref is not None or alt is not None
     by_rsid = rsid is not None

@@ -26,6 +26,7 @@ from app import repository
 from app.diff import compute_changed_keys
 from app.download import Downloader, validate_tbi
 from app.kafka_producer import IngestionCompletedEvent, IngestionEventProducer
+from app.metrics import INGESTION_DURATION_SECONDS, INGESTION_IN_PROGRESS, INGESTION_REJECTED_TOTAL
 from app.paths import ClinVarRefdataPaths
 from app.vcf_query import iter_records, read_published_date, rebuild_tabix_index
 
@@ -91,15 +92,34 @@ def ingest(
     overlapping scan/download if one is already in flight.
     """
     if not _ingestion_lock.acquire(blocking=False):
+        # A rejection is itself a signal (ADR 0020, observability#15), not
+        # just a defensive no-op that happens to return a 409 -- this is
+        # the real double-ingestion incident's failure mode, so every
+        # rejection (admin-triggered or scheduled -- both entry points call
+        # this same function) is counted here, at the one place the lock
+        # is actually contended, rather than only where the exception
+        # happens to be caught for HTTP translation (app/routes/admin.py).
+        INGESTION_REJECTED_TOTAL.inc()
         raise ClinVarIngestionAlreadyRunning("An ingestion is already running")
+    # Sampled instantaneously by a scrape rather than reconstructed after
+    # the fact from a log line -- set around the same critical section the
+    # lock itself guards (services#36), reset in the finally alongside the
+    # lock release so a crash mid-ingestion can't leave this stuck at 1.
+    INGESTION_IN_PROGRESS.set(1)
     try:
         release_id = uuid.uuid4()
         try:
-            return _do_ingest(conn, paths, downloader, producer, source_vcf_url, source_tbi_url, release_id)
+            # Wraps only the actual work (download through activation),
+            # not lock acquisition -- a run taking several multiples of the
+            # ~90s real-data baseline is itself alert-worthy (ADR 0020's
+            # ingestion-duration-anomaly SLI).
+            with INGESTION_DURATION_SECONDS.time():
+                return _do_ingest(conn, paths, downloader, producer, source_vcf_url, source_tbi_url, release_id)
         except Exception as exc:
             logger.error("ClinVar ingestion failed (attempted release %s)", release_id, exc_info=exc)
             raise ClinVarIngestionError(f"ClinVar ingestion failed for attempted release {release_id}") from exc
     finally:
+        INGESTION_IN_PROGRESS.set(0)
         _ingestion_lock.release()
 
 
