@@ -22,12 +22,21 @@ underlying `htslib` as the `htsjdk` this replaces).
 
 ## What this service owns
 
-- **Ingestion**: weekly download of ClinVar's GRCh38 VCF, checksum
-  validation of NCBI's published `.tbi` (rebuilding via `pysam.tabix_index`
-  only if validation fails), download-into-a-versioned-directory-then-flip-
-  a-`current`-pointer (never serves a half-written release), and recording
-  each release as a `clinvar_release` Postgres row (`published_date` parsed
-  from the VCF's own `##fileDate` header, not file mtime).
+- **Ingestion**: weekly download of ClinVar's GRCh38 VCF and its `.tbi`,
+  an attempt to validate the downloaded `.tbi` against NCBI's documented
+  `.md5` checksum sidecar (`<tbi-url>.md5`), and rebuilding the index via
+  `pysam.tabix_index` whenever that validation doesn't pass —
+  download-into-a-versioned-directory-then-flip-a-`current`-pointer
+  (never serves a half-written release), and recording each release as a
+  `clinvar_release` Postgres row (`published_date` parsed from the VCF's
+  own `##fileDate` header, not file mtime). In practice, on every real
+  ingestion run to date, NCBI's `.md5` sidecar doesn't exist at the
+  documented URL at all — the fetch 404s, `validate_tbi` treats "no
+  checksum available" the same as "checksum failed" (the safe default),
+  and the `pysam` rebuild is what actually runs every time, not an
+  exception path. The code still attempts the sidecar fetch first (in
+  case NCBI ever starts publishing one), but don't read the checksum
+  step as the normal case today — the rebuild is.
 - **Two Postgres tables**, on this service's own dedicated instance —
   `clinvar_release` and `clinvar_variant_index` (the rsID -> coordinates
   lookup table; tabix indexes are position-based, so this is the only
