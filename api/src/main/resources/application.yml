@@ -116,9 +116,10 @@ app:
     # 0011), not something this producer enforces — see
     # workers/README.md for the topic's actual configuration.
     work-items-topic: work-items
-    # services#25/#26 (ADR 0018): must match workers' identical property
-    # (workers/application.yml) -- workers is the producer, api is the
-    # consumer (see ClinVarCacheInvalidationConsumerConfig).
+    # services#25/#26 (ADR 0018); producer moved from workers to
+    # clinvar-service under ADR 0019 -- api remains this topic's consumer
+    # (see ClinVarCacheInvalidationConsumerConfig), the topic name and
+    # api's role in it are otherwise unchanged.
     clinvar-ingestion-topic: clinvar.ingestion.completed
   cache:
     work-items:
@@ -138,8 +139,12 @@ app:
       # even a much longer TTL would still be "correct", this is just a
       # reasonable default, not a tuned number.
       ttl: PT30M
-  clinvar:
-    # Shared RWX PVC mount point (platform#35, ADR 0018) -- same property
-    # name/default as workers/application.yml; api only ever reads
-    # {refdata-path}/current, never writes here.
-    refdata-path: ${CLINVAR_REFDATA_PATH:/data/refdata/clinvar}
+
+# In-cluster Kubernetes Service DNS default (ADR 0019, same pattern as
+# ADR 0010's api.base-url in gateway/application.yml) -- overridden at
+# deploy time by CLINVAR_SERVICE_URL. clinvar-service owns its own
+# namespace (`clinvar`), single consumer of its own dedicated Postgres
+# instance and PVC -- exactly the shape ADR 0019 exists to establish
+# after ADR 0018's cross-namespace PVC/Secret bugs.
+clinvar-service:
+  base-url: ${CLINVAR_SERVICE_URL:http://clinvar-service.clinvar.svc.cluster.local}

@@ -150,34 +150,6 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-redis</artifactId>
     </dependency>
-    <!--
-      services#24 (ADR 0018): htsjdk, in-process, for the request-path
-      point lookup against the current release's tabix-indexed VCF
-      (ClinVarVcfQueryService) — not a bcftools/tabix subprocess (ADR
-      0018's explicit call: per-request fork/exec latency and stdout-
-      parsing fragility are worse than this one extra JVM dependency).
-      Same version as workers/pom.xml, which also depends on htsjdk for
-      ingestion — kept in sync deliberately since both modules read/write
-      the same tabix file format.
-    -->
-    <dependency>
-      <groupId>com.github.samtools</groupId>
-      <artifactId>htsjdk</artifactId>
-      <version>4.3.0</version>
-    </dependency>
-    <!-- Same pin/reasoning as workers/pom.xml's identical block. -->
-    <dependency>
-      <groupId>org.apache.commons</groupId>
-      <artifactId>commons-compress</artifactId>
-      <version>1.28.0</version>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.xerial.snappy</groupId>
-      <artifactId>snappy-java</artifactId>
-      <version>1.1.10.7</version>
-      <scope>runtime</scope>
-    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
