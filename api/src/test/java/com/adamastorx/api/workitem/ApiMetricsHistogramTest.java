@@ -28,9 +28,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * instance's {@code /actuator/prometheus}, not just {@code _sum}/
  * {@code _count}/{@code _max} -- verified against api's actual running
  * context (real PostgreSQL via Flyway, embedded Kafka), the same mechanism
- * already proven for gateway ({@code GatewayMetricsHistogramTest}) and
- * workers ({@code WorkersMetricsHistogramTest}), not assumed to carry over
- * unverified just because it's "the same property".
+ * already proven for workers ({@code WorkersMetricsHistogramTest}), not
+ * assumed to carry over unverified just because it's "the same property".
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EmbeddedKafka(partitions = 3, topics = "work-items")

@@ -1,7 +1,7 @@
 # Shared multi-stage build for all services modules (ADR 0008).
 # The module to build/run is selected with a build arg:
 #
-#   docker build --build-arg MODULE=gateway -t ghcr.io/adamastorx/gateway:<sha> .
+#   docker build --build-arg MODULE=api -t ghcr.io/adamastorx/api:<sha> .
 #
 # Base image digests verified against the Docker Hub registry API on
 # 2026-07-23.

@@ -47,7 +47,7 @@
       No business HTTP API here — spring-boot-starter-webmvc is pulled in
       solely to give actuator an embedded servlet container so
       /actuator/health/liveness and /readiness exist over HTTP for kubelet
-      probes, exactly like gateway/api (ADR 0011). workers still gets no
+      probes, exactly like api (ADR 0011). workers still gets no
       Kubernetes Service (ADR 0009) — this is for the probe port only.
     -->
     <dependency>

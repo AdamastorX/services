@@ -72,14 +72,14 @@ management:
   endpoint:
     health:
       # Expose /actuator/health/liveness and /actuator/health/readiness for
-      # the Kubernetes probes (same as gateway, services#1).
+      # the Kubernetes probes (services#1).
       probes:
         enabled: true
   metrics:
     distribution:
       percentiles-histogram:
         # ADR 0017's named, deliberately-deferred gap, closed here
-        # (observability#15, ADR 0020) -- same reasoning as gateway's
+        # (observability#15, ADR 0020) -- same reasoning as workers'
         # application.yml: without this, http.server.requests only ever
         # exposes _sum/_count/_max on /actuator/prometheus, no _bucket
         # series, no real histogram_quantile(0.95, ...). Boot's own
@@ -119,7 +119,7 @@ management:
     sampling:
       # 100%: a single-node dev cluster with low traffic has no cost
       # reason to sample down, and full sampling is what actually proves
-      # a trace can be followed across gateway/api/workers.
+      # a trace can be followed across api/workers.
       probability: 1.0
 
 app:
@@ -153,7 +153,8 @@ app:
       ttl: PT30M
 
 # In-cluster Kubernetes Service DNS default (ADR 0019, same pattern as
-# ADR 0010's api.base-url in gateway/application.yml) -- overridden at
+# ADR 0010's api.base-url property, formerly in gateway's application.yml
+# before gateway was removed under ADR 0021) -- overridden at
 # deploy time by CLINVAR_SERVICE_URL. clinvar-service owns its own
 # namespace (`clinvar`), single consumer of its own dedicated Postgres
 # instance and PVC -- exactly the shape ADR 0019 exists to establish

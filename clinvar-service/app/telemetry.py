@@ -1,14 +1,14 @@
 """OpenTelemetry SDK wiring (ADR 0019).
 
 This project already has a working, cross-correlated tracing story across
-gateway/api/workers (observability#1, ADR 0013): OTLP over HTTP to a
+api/workers (observability#1, ADR 0013): OTLP over HTTP to a
 Collector, W3C traceparent propagation carrying trace context across
 service boundaries. clinvar-service participates in the exact same story
 using the language-appropriate SDK instead of reinventing anything --
 FastAPI's instrumentation extracts an inbound ``traceparent`` header
 automatically (the OTel SDK's default global propagator is
-already W3C tracecontext), so a trace started in ``gateway``/``api`` and
-continued into a call to ``GET /internal/clinvar/lookup`` shows up as one
+already W3C tracecontext), so a trace started in ``api`` and continued
+into a call to ``GET /internal/clinvar/lookup`` shows up as one
 continuous trace, not two disconnected ones.
 
 ``OTLP_COLLECTOR_ENDPOINT`` reuses the exact env var name (and, notably,

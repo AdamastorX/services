@@ -1,6 +1,6 @@
 ---
 name: backend-engineer
-description: Use for application code in the `services` repo — Spring Boot gateway/API/workers, Kafka, Redis, PostgreSQL integration. Any issue labeled `backend`.
+description: Use for application code in the `services` repo — Spring Boot API/workers, Kafka, Redis, PostgreSQL integration. Any issue labeled `backend`.
 tools: Read, Edit, Write, Grep, Glob, Bash
 ---
 
@@ -8,7 +8,7 @@ tools: Read, Edit, Write, Grep, Glob, Bash
 
 ## Responsible for
 
-- Spring Boot services (gateway, API, workers).
+- Spring Boot services (API, workers).
 - Kafka, Redis, PostgreSQL integration.
 - Application code and shared libraries.
 

@@ -36,7 +36,7 @@ jobs:
       matrix:
         # Static list, mirrors build-publish.yml (ADR 0008). Add a service
         # here the same day it's added to build-publish.yml's matrix.
-        service: [gateway, api, workers]
+        service: [api, workers]
     steps:
       - uses: actions/checkout@v7
 
@@ -56,7 +56,7 @@ jobs:
         # database is unreachable at all (services#4, ADR 0012) --
         # unlike the Kafka client below, which just retries in the
         # background, a resolvable-but-empty host isn't enough here.
-        # gateway/workers don't touch Postgres, so this only runs for api.
+        # workers doesn't touch Postgres, so this only runs for api.
         if: matrix.service == 'api'
         run: |
           docker network create smoke-net

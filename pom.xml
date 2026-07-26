@@ -21,7 +21,6 @@
   <description>AdamastorX application services — single multi-module reactor (ADR 0007)</description>
 
   <modules>
-    <module>gateway</module>
     <module>api</module>
     <module>workers</module>
   </modules>
