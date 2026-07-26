@@ -15,3 +15,6 @@ opentelemetry-instrumentation-fastapi==0.65b0
 opentelemetry-instrumentation-psycopg==0.65b0
 opentelemetry-instrumentation-confluent-kafka==0.65b0
 python-multipart==0.0.32
+# GET /metrics (ADR 0019/0020, observability#15) -- clinvar-service's
+# first Prometheus metrics of any kind (previously OTel tracing only).
+prometheus-client==0.26.0
