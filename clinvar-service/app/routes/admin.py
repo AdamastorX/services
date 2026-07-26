@@ -40,6 +40,8 @@ def trigger_ingestion(request: Request) -> dict:
                 settings.clinvar_source_vcf_url,
                 settings.clinvar_source_tbi_url,
             )
+    except ingestion.ClinVarIngestionAlreadyRunning as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ingestion.ClinVarIngestionError as exc:
         logger.error("Manual ingestion trigger failed", exc_info=exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

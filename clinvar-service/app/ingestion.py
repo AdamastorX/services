@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import threading
 import uuid
 from pathlib import Path
 
@@ -30,8 +31,20 @@ from app.vcf_query import iter_records, read_published_date, rebuild_tabix_index
 
 logger = logging.getLogger(__name__)
 
+_PROGRESS_LOG_EVERY = 250_000
+
+# Guards both the admin-triggered and the scheduled entry point (app/main.py
+# calls the same `ingest()` from each) -- a real double-ingestion ran
+# concurrently in production once (two overlapping manual triggers, each
+# doing its own full VCF scan at the same time) before this existed.
+_ingestion_lock = threading.Lock()
+
 
 class ClinVarIngestionError(RuntimeError):
+    pass
+
+
+class ClinVarIngestionAlreadyRunning(RuntimeError):
     pass
 
 
@@ -43,10 +56,13 @@ def _build_variant_index_rows(
     no rsID is only ever reachable via the coordinate-based lookup path.
     Returns (rows, total_records_scanned).
     """
+    logger.info("Scanning %s for variant index rows", vcf_path)
     rows: list[tuple[str, str, int, str, str, uuid.UUID]] = []
     total = 0
     for record in iter_records(vcf_path):
         total += 1
+        if total % _PROGRESS_LOG_EVERY == 0:
+            logger.info("Scanned %s records so far (%s index rows built)", total, len(rows))
         rs_values = record.info.get("RS")
         if not rs_values:
             continue
@@ -57,6 +73,7 @@ def _build_variant_index_rows(
             for raw_rs in rs_ids:
                 rsid = raw_rs if raw_rs.lower().startswith("rs") else f"rs{raw_rs}"
                 rows.append((rsid, record.chrom, record.pos, record.ref, alt, release_id))
+    logger.info("Finished scanning %s: %s records, %s index rows", vcf_path, total, len(rows))
     return rows, total
 
 
@@ -68,13 +85,22 @@ def ingest(
     source_vcf_url: str,
     source_tbi_url: str,
 ) -> uuid.UUID:
-    """Runs one full ingestion. Returns the new release's id."""
-    release_id = uuid.uuid4()
+    """Runs one full ingestion. Returns the new release's id.
+
+    Raises ClinVarIngestionAlreadyRunning instead of starting a second,
+    overlapping scan/download if one is already in flight.
+    """
+    if not _ingestion_lock.acquire(blocking=False):
+        raise ClinVarIngestionAlreadyRunning("An ingestion is already running")
     try:
-        return _do_ingest(conn, paths, downloader, producer, source_vcf_url, source_tbi_url, release_id)
-    except Exception as exc:
-        logger.error("ClinVar ingestion failed (attempted release %s)", release_id, exc_info=exc)
-        raise ClinVarIngestionError(f"ClinVar ingestion failed for attempted release {release_id}") from exc
+        release_id = uuid.uuid4()
+        try:
+            return _do_ingest(conn, paths, downloader, producer, source_vcf_url, source_tbi_url, release_id)
+        except Exception as exc:
+            logger.error("ClinVar ingestion failed (attempted release %s)", release_id, exc_info=exc)
+            raise ClinVarIngestionError(f"ClinVar ingestion failed for attempted release {release_id}") from exc
+    finally:
+        _ingestion_lock.release()
 
 
 def _do_ingest(
@@ -160,4 +186,4 @@ def _do_ingest(
     return release_id
 
 
-__all__ = ["ingest", "ClinVarIngestionError"]
+__all__ = ["ingest", "ClinVarIngestionError", "ClinVarIngestionAlreadyRunning"]
