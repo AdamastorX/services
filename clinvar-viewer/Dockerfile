@@ -8,9 +8,16 @@
 # 8080 out of the box, matching this project's existing non-root
 # container posture elsewhere.
 #
+# 1.31.3-alpine3.24-slim, not 1.27-alpine: the first pin (CI-confirmed,
+# not just assumed) carried real, already-fixed CRITICAL/HIGH CVEs
+# (openssl, libxml2, musl, nghttp2, zlib) against a stale Alpine base --
+# the same base-image-CVE-gate friction the top-level Java Dockerfile
+# already hit once (platform#6). -slim trims extra packages this static
+# site doesn't need, on top of picking the most recently-patched tag.
+#
 # Base image digest verified against the Docker Hub registry API on
 # 2026-07-27, same practice every other Dockerfile in this repo follows.
-FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+FROM nginxinc/nginx-unprivileged:1.31.3-alpine3.24-slim@sha256:22f839c5fb4007dc24d203a170a9e03fc185d660bfefc34ac6823a7aef085cbc
 
 COPY index.html style.css app.js /usr/share/nginx/html/
 
