@@ -197,8 +197,36 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
 
+  clinvar_viewer:
+    # A static nginx image with no application logic of its own (plain
+    # HTML/CSS/JS, IGV.js loaded from a CDN client-side) -- no test step,
+    # just build+scan the image, same as the image-scan half of the two
+    # jobs above.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image for scanning (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: clinvar-viewer
+          tags: adamastorx/clinvar-viewer:pr-${{ github.event.pull_request.number }}
+          push: false
+          load: true
+
+      - name: Scan image for critical/high CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: adamastorx/clinvar-viewer:pr-${{ github.event.pull_request.number }}
+          scan-type: image
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
   ci:
-    needs: [build, scan, clinvar_service]
+    needs: [build, scan, clinvar_service, clinvar_viewer]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -206,11 +234,13 @@ jobs:
         run: |
           if [ "${{ needs.build.result }}" != "success" ] \
             || [ "${{ needs.scan.result }}" != "success" ] \
-            || [ "${{ needs.clinvar_service.result }}" != "success" ]; then
+            || [ "${{ needs.clinvar_service.result }}" != "success" ] \
+            || [ "${{ needs.clinvar_viewer.result }}" != "success" ]; then
             echo "One or more jobs failed:"
             echo "  build:           ${{ needs.build.result }}"
             echo "  scan:            ${{ needs.scan.result }}"
             echo "  clinvar_service: ${{ needs.clinvar_service.result }}"
+            echo "  clinvar_viewer:  ${{ needs.clinvar_viewer.result }}"
             exit 1
           fi
           echo "All jobs succeeded."
