@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ClinVar Variant Explorer — AdamastorX</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">AdamastorX</span>
+      <span class="brand-sub">Clinical Variant Explorer</span>
+    </div>
+    <div class="provenance" id="provenance">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-label">connecting to clinvar-service…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="search-panel">
+      <form id="search-form" autocomplete="off">
+        <label for="rsid-input">rsID</label>
+        <input id="rsid-input" name="rsid" type="text" placeholder="rs80357906" spellcheck="false" />
+        <button type="submit">Look up</button>
+      </form>
+      <div class="try-these">
+        <span>Try:</span>
+        <button type="button" class="chip" data-rsid="rs80357906">rs80357906 — BRCA1</button>
+        <button type="button" class="chip" data-rsid="rs80359550">rs80359550 — BRCA2</button>
+      </div>
+      <p class="hint">
+        Real data — every result here comes from a live ClinVar release,
+        ingested by <code>clinvar-service</code> and served through
+        <code>api</code>. Nothing on this page is mocked.
+      </p>
+    </section>
+
+    <section class="result-panel" id="result-panel" hidden>
+      <div class="result-card">
+        <div class="result-head">
+          <span class="sig-badge" id="sig-badge">—</span>
+          <h2 id="result-rsid">—</h2>
+        </div>
+        <dl class="result-facts">
+          <div><dt>Locus</dt><dd id="fact-locus">—</dd></div>
+          <div><dt>Ref → Alt</dt><dd id="fact-alleles">—</dd></div>
+          <div><dt>Review status</dt><dd id="fact-review">—</dd></div>
+          <div><dt>ClinVar release</dt><dd id="fact-release">—</dd></div>
+        </dl>
+      </div>
+      <div id="igv-container" class="igv-container"></div>
+    </section>
+
+    <section class="result-panel error-panel" id="error-panel" hidden>
+      <p id="error-message"></p>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Source: NCBI ClinVar (public domain). Viewer renders real API
+      responses from <code>api.local.adamastorx.dev</code> — see
+      <a href="https://github.com/AdamastorX" target="_blank" rel="noopener">github.com/AdamastorX</a>.
+    </p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/igv@2.15.11/dist/igv.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
