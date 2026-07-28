@@ -20,9 +20,16 @@ import org.springframework.web.server.ResponseStatusException;
  * (the IGV.js variant visualization page), which needs a real browser
  * fetch from its own Ingress hostname to this one. Every other endpoint
  * in this service stays same-origin-only by default.
+ *
+ * <p>{@code .test}, not {@code .dev} -- confirmed live: {@code .dev} is
+ * HSTS-preloaded into every major browser (Google-owned, no manual
+ * override possible on an untrusted cert, unlike a normal self-signed
+ * warning), which broke this in both Chrome and Firefox before the CA
+ * was even trusted. {@code .test} is IANA-reserved for exactly this
+ * case and isn't preloaded (see platform's cert-manager-issuers/README.md).
  */
 @RestController
-@CrossOrigin(origins = "https://clinvar-viewer.local.adamastorx.dev", methods = RequestMethod.GET)
+@CrossOrigin(origins = "https://clinvar-viewer.local.adamastorx.test", methods = RequestMethod.GET)
 public class VariantLookupController {
 
     private final VariantLookupService lookupService;

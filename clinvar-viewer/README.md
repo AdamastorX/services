@@ -15,12 +15,12 @@ now.
 ## Local development
 
 Just open `index.html` in a browser, or serve the directory with any
-static file server. It calls `https://api.local.adamastorx.dev` — that
+static file server. It calls `https://api.local.adamastorx.test` — that
 hostname needs to resolve and its CA needs to be trusted (see
 `platform/kubernetes/cert-manager-issuers/README.md`).
 
 ## Deployment
 
 `platform/kubernetes/clinvar-viewer/` + `argocd/apps/clinvar-viewer.yaml`.
-Its own Ingress at `clinvar-viewer.local.adamastorx.dev` (same
+Its own Ingress at `clinvar-viewer.local.adamastorx.test` (same
 `adamastorx-ca`/Traefik pattern every other service here uses).
