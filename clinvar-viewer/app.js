@@ -6,7 +6,7 @@
 // shown here is whatever the live cluster's clinvar-service actually
 // has ingested right now.
 
-const API_BASE = "https://api.local.adamastorx.dev";
+const API_BASE = "https://api.local.adamastorx.test";
 
 const connDot = document.getElementById("conn-dot");
 const connLabel = document.getElementById("conn-label");
@@ -44,7 +44,7 @@ async function lookup(rsid) {
   } catch (err) {
     setConn("err", "unreachable");
     showError(
-      `Could not reach api.local.adamastorx.dev. This page needs the ` +
+      `Could not reach api.local.adamastorx.test. This page needs the ` +
         `AdamastorX cluster's Ingress resolvable and its CA trusted -- ` +
         `see platform/kubernetes/cert-manager-issuers/README.md.`
     );
