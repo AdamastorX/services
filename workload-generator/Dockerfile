@@ -19,7 +19,18 @@ WORKDIR /build
 COPY requirements.txt .
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
- && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+ && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt \
+ # Found by this component's own CI run, not copied from clinvar-service
+ # (whose Dockerfile stops after the line above): Trivy's python-pkg scan
+ # flagged pip's own vendored msgpack (CVE GHSA-6v7p-g79w-8964) and the
+ # venv's ensurepip-seeded setuptools (CVE-2025-47273), neither of which
+ # this runtime needs -- `python -m generator`'s only real dependency is
+ # `requests` (confirmed: modern requests/urllib3/certifi/idna/
+ # charset-normalizer import none of pip/setuptools/pkg_resources at
+ # runtime). Uninstalling them here, before the venv is copied into the
+ # runtime stage below, removes the vulnerable surface entirely rather
+ # than accepting it as an unfixable transitive dependency it isn't.
+ && /opt/venv/bin/pip uninstall -y pip setuptools wheel
 
 # --- Runtime stage: slim, non-root ------------------------------------------
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
