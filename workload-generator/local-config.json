@@ -1,0 +1,10 @@
+{
+  "target_rps": 2.0,
+  "min_rps_fraction": 0.15,
+  "cycle_seconds": 240,
+  "error_fraction": 0.08,
+  "hot_key_weight": 0.8,
+  "work_item_write_weight": 0.4,
+  "work_item_read_weight": 0.25,
+  "variant_lookup_weight": 0.35
+}

@@ -1,0 +1,4 @@
+# Runtime dependencies (backlog #45). Deliberately minimal -- the
+# generator's only real dependency is an HTTP client; everything else
+# (rate shaping, config parsing, weighted choice) is stdlib.
+requests==2.32.3
