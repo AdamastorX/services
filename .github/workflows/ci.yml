@@ -197,6 +197,62 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
 
+  workload_generator:
+    # backlog #45: this project's third non-JVM component (after
+    # clinvar-service and clinvar-viewer) -- Python, no in-image HTTP
+    # server (deliberately the simplest thing that works, a script rather
+    # than a service), so its shape mirrors clinvar_service's (test, then
+    # build+scan the image) minus the smoke-test step, since there's no
+    # health endpoint to poll (generator/healthcheck.py is an exec probe,
+    # meaningless outside a real Deployment with the heartbeat file it
+    # checks).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workload-generator
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: workload-generator/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image for scanning (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: workload-generator
+          tags: adamastorx/workload-generator:pr-${{ github.event.pull_request.number }}
+          push: false
+          load: true
+
+      - name: Scan image for critical/high CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: adamastorx/workload-generator:pr-${{ github.event.pull_request.number }}
+          scan-type: image
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Scan Python dependencies for CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: workload-generator
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
   clinvar_viewer:
     # A static nginx image with no application logic of its own (plain
     # HTML/CSS/JS, IGV.js loaded from a CDN client-side) -- no test step,
@@ -226,7 +282,7 @@ jobs:
           ignore-unfixed: true
 
   ci:
-    needs: [build, scan, clinvar_service, clinvar_viewer]
+    needs: [build, scan, clinvar_service, workload_generator, clinvar_viewer]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -235,12 +291,14 @@ jobs:
           if [ "${{ needs.build.result }}" != "success" ] \
             || [ "${{ needs.scan.result }}" != "success" ] \
             || [ "${{ needs.clinvar_service.result }}" != "success" ] \
+            || [ "${{ needs.workload_generator.result }}" != "success" ] \
             || [ "${{ needs.clinvar_viewer.result }}" != "success" ]; then
             echo "One or more jobs failed:"
-            echo "  build:           ${{ needs.build.result }}"
-            echo "  scan:            ${{ needs.scan.result }}"
-            echo "  clinvar_service: ${{ needs.clinvar_service.result }}"
-            echo "  clinvar_viewer:  ${{ needs.clinvar_viewer.result }}"
+            echo "  build:              ${{ needs.build.result }}"
+            echo "  scan:               ${{ needs.scan.result }}"
+            echo "  clinvar_service:    ${{ needs.clinvar_service.result }}"
+            echo "  workload_generator: ${{ needs.workload_generator.result }}"
+            echo "  clinvar_viewer:     ${{ needs.clinvar_viewer.result }}"
             exit 1
           fi
           echo "All jobs succeeded."

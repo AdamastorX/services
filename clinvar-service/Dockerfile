@@ -16,7 +16,18 @@ WORKDIR /build
 COPY requirements.txt .
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
- && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+ && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt \
+ # Pre-existing, unrelated to whatever else this commit touches --
+ # Trivy's vulnerability DB caught up and started flagging pip's own
+ # vendored msgpack (CVE GHSA-6v7p-g79w-8964) and the venv's
+ # ensurepip-seeded setuptools (CVE-2025-47273) here too, same root
+ # cause as services/workload-generator/Dockerfile hit first (see that
+ # file's comment for the confirmation that runtime code never imports
+ # either). Neither is needed once `uvicorn app.main:app` is actually
+ # running -- removing them here removes the vulnerable surface instead
+ # of leaving this image's required CI check red for a reason that has
+ # nothing to do with clinvar-service's own code.
+ && /opt/venv/bin/pip uninstall -y pip setuptools wheel
 
 # --- Runtime stage: slim, non-root ------------------------------------------
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
