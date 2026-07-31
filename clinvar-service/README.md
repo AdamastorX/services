@@ -145,19 +145,57 @@ in `changedKeys` — no tabix re-read on `api`'s side, ever.
 Plain numbered `.sql` files under `migrations/`, applied once each (in
 filename order) at process startup, tracked in a `schema_migrations`
 table this service creates and owns itself (see `app/migrator.py`). No
-Flyway (this is Python) and deliberately no Alembic/yoyo either — two
-tables, a handful of migrations expected over this service's lifetime,
-boring beats clever.
+Flyway (this is Python) and deliberately no Alembic/yoyo either — three
+tables (as of migrations/0002, backlog #54's job table), a handful of
+migrations expected over this service's lifetime, boring beats clever.
 
 ## Scheduler
 
 APScheduler's `BackgroundScheduler` with a cron trigger, in-process —
 deliberately not a Kubernetes `CronJob` (which spawns a `Job` under the
 hood, and this project's milestone boundary excludes Kubernetes Jobs
-entirely; see ADR 0018/0019). A manual admin-triggered re-ingestion
-endpoint (`POST /internal/clinvar/ingest`) exists alongside it for dev/CI
-use, matching the continuity ADR 0018 established for its Java
-equivalent.
+entirely; see ADR 0018/0019).
+
+## Async ingestion job control plane (backlog #54)
+
+`POST /internal/clinvar/ingest` returns `202` with a job id immediately
+rather than blocking for the whole multi-minute ingestion — the fragile
+shape `docs/SESSION_STATE.md` named directly (a synchronous request at
+the mercy of every client/proxy/Ingress timeout in between). The
+scheduled weekly trigger goes through the exact same job-tracked path
+(`app.ingestion.ingest`, `trigger="scheduled"`).
+
+- **State**: persisted in `clinvar_ingestion_job` (this service's own
+  Postgres), not in memory — `queued` / `running` / `succeeded` /
+  `failed` / `cancelled`. `GET /internal/clinvar/ingest/{job_id}` polls
+  it, including real progress (the same per-250k-record checkpoint
+  `app/ingestion.py` already logs, now also written to the row).
+- **Concurrency guard**: `clinvar_ingestion_job`'s own partial unique
+  index (at most one `queued`/`running` row at a time) — this **replaces**
+  services#36's in-process `threading.Lock`. The Lock only ever protected
+  one process's memory and reset to unlocked on every restart, which is
+  exactly the wrong property for the failure mode this item exists to
+  fix. A rejected trigger still gets an immediate `409` (same
+  `clinvar_ingestion_rejected_total` counter, now incremented from the
+  Postgres unique-violation path instead of a failed lock acquisition).
+- **Pod-restart safety**: at startup, before the scheduler starts or any
+  new trigger is accepted, `app.ingestion.reconcile_orphaned_jobs` marks
+  any job still `queued`/`running` as `failed` with an explicit reason —
+  a process death mid-ingestion never leaves a job `running` forever.
+  True mid-scan resume was considered and rejected as scope this item
+  didn't ask for (the same "don't build ahead of need" discipline ADR
+  0021 applies elsewhere).
+- **Cancellation**: `POST /internal/clinvar/ingest/{job_id}/cancel`
+  actually stops the running scan (checked every 10k records inside
+  `_build_variant_index_rows`, and before/after the download step) —
+  not just a relabelled row. A cancelled job's abandoned placeholder
+  `clinvar_release` row is cleaned up, never left dangling.
+- **Metrics**: `clinvar_ingestion_jobs_total{status}` counts jobs
+  reaching a terminal state. `status="succeeded"` is also the real
+  success-only signal `ClinVarIngestionFreshnessBreach`
+  (`platform/argocd/apps/prometheus.yaml`) now keys off, closing
+  backlog #21e's ingestion-side gap (the old expression only proved "an
+  attempt happened", regardless of outcome).
 
 ## Deferred / simplified scope, stated explicitly
 
