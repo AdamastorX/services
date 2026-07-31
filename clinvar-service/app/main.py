@@ -13,6 +13,7 @@ from app import db
 from app.config import get_settings
 from app.download import Downloader
 from app.ingestion import ingest as run_ingestion
+from app.ingestion import reconcile_orphaned_jobs
 from app.kafka_producer import IngestionEventProducer
 from app.migrator import run_migrations
 from app.paths import ClinVarRefdataPaths
@@ -45,6 +46,16 @@ async def lifespan(app: FastAPI):
         if applied:
             logger.info("Applied migrations: %s", applied)
 
+        # backlog #54: any job still queued/running here means the
+        # previous process died mid-ingestion -- reconciled to a terminal
+        # 'failed' state before the scheduler starts or any new trigger
+        # can be accepted, so a restart never leaves a job 'running'
+        # forever. See app.ingestion.reconcile_orphaned_jobs for why this
+        # doesn't attempt a resume.
+        reconciled = reconcile_orphaned_jobs(conn)
+        if reconciled:
+            logger.warning("Reconciled %d orphaned ClinVar ingestion job(s) at startup: %s", len(reconciled), reconciled)
+
     app.state.refdata_paths = ClinVarRefdataPaths(settings.clinvar_refdata_path)
     app.state.downloader = Downloader()
     app.state.event_producer = IngestionEventProducer(
@@ -60,6 +71,7 @@ async def lifespan(app: FastAPI):
                 app.state.event_producer,
                 settings.clinvar_source_vcf_url,
                 settings.clinvar_source_tbi_url,
+                trigger="scheduled",
             )
 
     app.state.scheduler = start_scheduler(settings.clinvar_ingestion_cron, _scheduled_ingest)
