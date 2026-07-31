@@ -9,7 +9,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Backlog #16 / ADR 0026's relay half: an independent poll loop that
@@ -24,6 +25,18 @@ import org.springframework.transaction.annotation.Transactional;
  * KafkaTemplate} -- this relay is intentionally generic across any future
  * outbox_events row, not work-items-specific, the same way the table
  * itself is topic-agnostic.
+ *
+ * <p>{@code markPublished} runs through a {@link TransactionTemplate}
+ * (programmatic transactions), not {@code @Transactional} on a private
+ * helper method of this same class -- found live via watchlist-service's
+ * own identical relay bug (backlog #53, same ADR 0026 pattern): {@code
+ * publish()} calling {@code this.markPublished(event)} as a plain internal
+ * method call is classic Spring AOP self-invocation, which silently
+ * bypasses the CGLIB proxy {@code @Transactional} needs to ever open a
+ * transaction. {@link TransactionTemplate} is a direct programmatic API
+ * with no such hole. Applied here proactively once found in {@code
+ * watchlist-service}'s {@code NotificationRelay}, the same class of bug in
+ * the same architectural shape, rather than waiting to hit it live here too.
  */
 @Component
 public class OutboxRelay {
@@ -32,14 +45,17 @@ public class OutboxRelay {
 
     private final OutboxEventJpaRepository repository;
     private final KafkaTemplate<String, String> outboxKafkaTemplate;
+    private final TransactionTemplate transactionTemplate;
     private final int batchSize;
 
     public OutboxRelay(
             OutboxEventJpaRepository repository,
             KafkaTemplate<String, String> outboxKafkaTemplate,
+            PlatformTransactionManager transactionManager,
             @Value("${app.outbox.batch-size:50}") int batchSize) {
         this.repository = repository;
         this.outboxKafkaTemplate = outboxKafkaTemplate;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.batchSize = batchSize;
     }
 
@@ -65,8 +81,7 @@ public class OutboxRelay {
         }
     }
 
-    @Transactional
     void markPublished(OutboxEventEntity event) {
-        repository.markPublished(event.getId(), Instant.now());
+        transactionTemplate.executeWithoutResult(status -> repository.markPublished(event.getId(), Instant.now()));
     }
 }
