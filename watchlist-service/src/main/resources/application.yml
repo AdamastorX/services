@@ -1,0 +1,58 @@
+spring:
+  application:
+    name: watchlist-service
+  datasource:
+    # Own, dedicated Postgres instance (platform/argocd/apps/watchlist-postgresql.yaml)
+    # -- not api's work_items instance, not clinvar-service's -- same
+    # single-consumer-per-instance reasoning ADR 0012/0019 already established.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://watchlist-postgresql.watchlist.svc.cluster.local:5432/watchlist}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+  flyway:
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka.kafka.svc.cluster.local:9092}
+    consumer:
+      # Distinct group id from api's own "api" group on the same topic
+      # (backlog #53: a second, independent consumer, not sharing api's
+      # group and fighting over partitions/offsets).
+      group-id: ${spring.application.name}
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_COLLECTOR_ENDPOINT:http://otel-collector.otel.svc.cluster.local:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0
+
+app:
+  kafka:
+    clinvar-ingestion-topic: clinvar.ingestion.completed
+  ntfy:
+    base-url: ${NTFY_BASE_URL:https://ntfy.sh}
+    # Same, already-live-verified topic Alertmanager posts to (backlog #21c,
+    # argocd/apps/prometheus.yaml) -- reused, not a second channel invented
+    # for subscribers. A subscription may still override its own ntfy_topic
+    # at creation time (SubscriptionController).
+    default-topic: ${NTFY_DEFAULT_TOPIC:adamastorx-alerts-64ec5a92c29196ad}
+  delivery:
+    batch-size: ${WATCHLIST_RELAY_BATCH_SIZE:50}
+    max-attempts: ${WATCHLIST_RELAY_MAX_ATTEMPTS:5}
+    relay-interval-ms: ${WATCHLIST_RELAY_INTERVAL_MS:2000}

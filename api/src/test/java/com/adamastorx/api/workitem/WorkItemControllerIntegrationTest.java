@@ -38,7 +38,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EmbeddedKafka(partitions = 3, topics = "work-items")
-@TestPropertySource(properties = "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}")
+@TestPropertySource(
+        properties = {
+            "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
+            // backlog #16/ADR 0026: publish is now async via OutboxRelay
+            // (default 2s tick) rather than synchronous in the request
+            // thread -- a fast tick here keeps this test quick and not
+            // flaky against getSingleRecord's 10s wait below.
+            "app.outbox.relay-interval-ms=200",
+        })
 @Testcontainers
 @DirtiesContext
 class WorkItemControllerIntegrationTest {

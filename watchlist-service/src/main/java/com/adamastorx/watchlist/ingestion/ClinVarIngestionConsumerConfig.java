@@ -1,4 +1,4 @@
-package com.adamastorx.api.clinvar;
+package com.adamastorx.watchlist.ingestion;
 
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
@@ -17,37 +17,31 @@ import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.util.backoff.FixedBackOff;
 
 /**
- * Same shape as {@code workers.workitem.WorkItemConsumerConfig} (ADR
- * 0011) -- {@code api}'s first Kafka consumer (it has only ever produced,
- * to {@code work-items}, until services#26). A hand-built, typed
- * container factory for the same reason as that class: Boot's
- * auto-configured one is untyped, and this Boot 4.1 line doesn't reliably
- * propagate {@code spring.kafka.listener.ack-mode} onto an
- * auto-configured factory (found the hard way on {@code workers}'
- * consumer, services#3 -- see that class's javadoc for the full story).
+ * Same hand-built, typed container factory shape as api's own {@code
+ * ClinVarCacheInvalidationConsumerConfig} (ADR 0011's documented reason:
+ * Boot's auto-configured factory is untyped). {@code group-id} defaults to
+ * {@code spring.application.name} ({@code watchlist-service}, see
+ * application.yml) -- a distinct consumer group from api's {@code api}
+ * group on the exact same topic is what makes this a second, genuinely
+ * independent consumer (backlog #53's stated purpose) rather than a
+ * replacement or a competing consumer within api's own group.
  *
- * <p><strong>Also restores the untyped {@code KafkaTemplate<Object, Object>}
- * bean</strong> ({@link #kafkaTemplate}) Boot's own {@code
- * KafkaAutoConfiguration} would otherwise provide. {@code
- * com.adamastorx.api.outbox.OutboxKafkaConfig} (backlog #16, ADR 0026)
- * defines its own typed {@code KafkaTemplate<String, String>} bean, which
- * makes Boot's {@code @ConditionalOnMissingBean(KafkaTemplate.class)} back
- * off from creating the untyped default -- that condition matches on raw
- * type, ignoring generics (the same reason the now-removed {@code
- * WorkItemProducerConfig} needed this exact restoration before the #16
- * outbox change replaced it). This never mattered before because nothing in
- * {@code api} needed {@code KafkaOperations<Object, Object>}; {@link
- * #clinVarCacheInvalidationErrorHandler}'s {@code
- * DeadLetterPublishingRecoverer} below is the first thing that does
- * (found via this repo's own CI, same failure mode as {@code workers}'
- * identical fix in {@code ClinVarIngestionProducerConfig}).
+ * <p>The {@link DeadLetterPublishingRecoverer}/{@link DefaultErrorHandler}
+ * below is the *Kafka listener's own* error path (a message this listener's
+ * code cannot process at all, e.g. malformed JSON or a bug in {@link
+ * DeliveryResolutionService}) -- entirely separate from {@link
+ * com.adamastorx.watchlist.delivery.NotificationRelay}'s per-subscriber
+ * dead-letter (a specific subscriber's own ntfy target permanently
+ * failing). Two different failure classes, two different DLQs; conflating
+ * them would mean one bad subscriber's target could block every other
+ * subscriber's fan-out, which is exactly what backlog #53's AC rules out.
  */
 @Configuration
-public class ClinVarCacheInvalidationConsumerConfig {
+public class ClinVarIngestionConsumerConfig {
 
     private static final long RETRY_BACKOFF_MILLIS = 1_000L;
     private static final long RETRY_ATTEMPTS_AFTER_FIRST_FAILURE = 2L;
-    private static final String CLINVAR_EVENT_PACKAGE = "com.adamastorx.api.clinvar";
+    private static final String EVENT_PACKAGE = "com.adamastorx.watchlist.ingestion";
 
     @Bean
     public KafkaTemplate<Object, Object> kafkaTemplate(KafkaProperties kafkaProperties) {
@@ -55,7 +49,7 @@ public class ClinVarCacheInvalidationConsumerConfig {
     }
 
     @Bean
-    public DefaultErrorHandler clinVarCacheInvalidationErrorHandler(KafkaOperations<Object, Object> kafkaOperations) {
+    public DefaultErrorHandler clinVarIngestionErrorHandler(KafkaOperations<Object, Object> kafkaOperations) {
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(kafkaOperations);
         FixedBackOff backOff = new FixedBackOff(RETRY_BACKOFF_MILLIS, RETRY_ATTEMPTS_AFTER_FIRST_FAILURE);
         return new DefaultErrorHandler(recoverer, backOff);
@@ -66,7 +60,7 @@ public class ClinVarCacheInvalidationConsumerConfig {
             KafkaProperties kafkaProperties) {
         JsonDeserializer<ClinVarIngestionCompletedEvent> valueDeserializer =
                 new JsonDeserializer<>(ClinVarIngestionCompletedEvent.class, false);
-        valueDeserializer.addTrustedPackages(CLINVAR_EVENT_PACKAGE);
+        valueDeserializer.addTrustedPackages(EVENT_PACKAGE);
         return new DefaultKafkaConsumerFactory<>(
                 kafkaProperties.buildConsumerProperties(), new StringDeserializer(), valueDeserializer);
     }
@@ -75,11 +69,16 @@ public class ClinVarCacheInvalidationConsumerConfig {
     public ConcurrentKafkaListenerContainerFactory<String, ClinVarIngestionCompletedEvent>
             clinVarIngestionEventKafkaListenerContainerFactory(
                     ConsumerFactory<String, ClinVarIngestionCompletedEvent> clinVarIngestionEventConsumerFactory,
-                    DefaultErrorHandler clinVarCacheInvalidationErrorHandler) {
+                    DefaultErrorHandler clinVarIngestionErrorHandler) {
         ConcurrentKafkaListenerContainerFactory<String, ClinVarIngestionCompletedEvent> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(clinVarIngestionEventConsumerFactory);
-        factory.setCommonErrorHandler(clinVarCacheInvalidationErrorHandler);
+        factory.setCommonErrorHandler(clinVarIngestionErrorHandler);
+        // MANUAL_IMMEDIATE, same as api's own consumer -- the listener below
+        // only acknowledges after DeliveryResolutionService's transaction
+        // commits the PENDING delivery rows, not before. That ordering is
+        // the actual "event consumed" checkpoint the crash test targets: ack
+        // happens after durability, never before.
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
         factory.getContainerProperties().setObservationEnabled(true);
         return factory;
