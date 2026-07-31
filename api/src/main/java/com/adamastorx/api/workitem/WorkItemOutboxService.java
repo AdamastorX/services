@@ -22,23 +22,33 @@ import org.springframework.transaction.annotation.Transactional;
  * this method returns -- unlike the code this replaces, a publish failure
  * (or the broker simply being down right now) can no longer silently drop
  * the Kafka side of a successfully committed save.
+ *
+ * <p>Builds its own {@code ObjectMapper} rather than injecting a Spring
+ * bean -- found live via CI (not assumed): this module has no classic
+ * Jackson 2 ({@code com.fasterxml.jackson.databind.ObjectMapper}) bean
+ * anywhere. Boot 4.1's own Jackson autoconfiguration provides a Jackson 3
+ * ({@code tools.jackson.databind.ObjectMapper}) bean instead (see {@code
+ * pom.xml}'s comment on why {@code jackson-databind} -- the classic
+ * Jackson 2 artifact spring-kafka's {@code JsonSerializer} needs -- is a
+ * plain, non-autoconfigured dependency here), so injecting the classic
+ * type failed to start the whole application context with {@code
+ * NoSuchBeanDefinitionException}, taking down every integration test in
+ * the module. A plain {@code new ObjectMapper()} needs no bean at all.
  */
 @Service
 public class WorkItemOutboxService {
 
     private final WorkItemJpaRepository workItemRepository;
     private final OutboxEventJpaRepository outboxRepository;
-    private final ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final String topic;
 
     public WorkItemOutboxService(
             WorkItemJpaRepository workItemRepository,
             OutboxEventJpaRepository outboxRepository,
-            ObjectMapper objectMapper,
             @Value("${app.kafka.work-items-topic}") String topic) {
         this.workItemRepository = workItemRepository;
         this.outboxRepository = outboxRepository;
-        this.objectMapper = objectMapper;
         this.topic = topic;
     }
 
