@@ -2,6 +2,7 @@ package com.adamastorx.api.outbox;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,16 +48,19 @@ public class OutboxRelay {
     private final KafkaTemplate<String, String> outboxKafkaTemplate;
     private final TransactionTemplate transactionTemplate;
     private final int batchSize;
+    private final long sendTimeoutMs;
 
     public OutboxRelay(
             OutboxEventJpaRepository repository,
             KafkaTemplate<String, String> outboxKafkaTemplate,
             PlatformTransactionManager transactionManager,
-            @Value("${app.outbox.batch-size:50}") int batchSize) {
+            @Value("${app.outbox.batch-size:50}") int batchSize,
+            @Value("${app.outbox.send-timeout-ms:5000}") long sendTimeoutMs) {
         this.repository = repository;
         this.outboxKafkaTemplate = outboxKafkaTemplate;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.batchSize = batchSize;
+        this.sendTimeoutMs = sendTimeoutMs;
     }
 
     @Scheduled(fixedDelayString = "${app.outbox.relay-interval-ms:2000}")
@@ -69,12 +73,23 @@ public class OutboxRelay {
 
     private void publish(OutboxEventEntity event) {
         try {
-            // Bounded, synchronous get() -- this relay's own scheduled thread is
-            // the only thing waiting on it, and a short timeout here is what
-            // keeps one unreachable broker from silently wedging every future
-            // tick forever; a real failure just leaves the row PENDING for the
-            // next tick, same outcome as an exception below.
-            outboxKafkaTemplate.send(event.getTopic(), event.getMessageKey(), event.getPayload()).get();
+            // Bounded, synchronous get(sendTimeoutMs) -- found on review, not by
+            // the crash test above (that test's mock broker at localhost:1 hits
+            // this same path but the test only ever asserts the row is still
+            // PENDING, which holds whether the relay is genuinely retrying or
+            // just stuck blocking on its very first attempt, so it can't tell the
+            // two apart): a bare get() with no arguments doesn't fail fast at
+            // all, it blocks on the producer's own default max.block.ms/
+            // delivery.timeout.ms (60-120s) before the future completes
+            // exceptionally, which would stall this relay's single-threaded batch
+            // loop for up to two minutes per stuck event during exactly the kind
+            // of Kafka outage chaos scenario 1 already exercised live. An
+            // explicit, much shorter timeout here is what actually keeps one
+            // unreachable broker from starving the rest of a batch tick -- a real
+            // failure (timeout or otherwise) just leaves the row PENDING for the
+            // next tick, same outcome as any other exception below.
+            outboxKafkaTemplate.send(event.getTopic(), event.getMessageKey(), event.getPayload())
+                    .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
             markPublished(event);
         } catch (Exception ex) {
             log.warn("Failed to publish outbox event {} (topic {}), will retry next tick: {}", event.getId(), event.getTopic(), ex.getMessage());

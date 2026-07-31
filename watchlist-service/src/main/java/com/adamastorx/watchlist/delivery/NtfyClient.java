@@ -1,7 +1,10 @@
 package com.adamastorx.watchlist.delivery;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -27,8 +30,17 @@ public class NtfyClient {
 
     private final RestClient restClient;
 
+    // Found on review (same class of issue as OutboxRelay's Kafka send(), backlog
+    // #53/api's outbox retrofit): RestClient.builder() alone has no connect/read
+    // timeout at all, so a hung or unreachable ntfy.sh would block this relay's
+    // single-threaded poll loop indefinitely instead of failing the attempt and
+    // retrying on the next tick, same "one stuck call starves the whole batch"
+    // shape. Explicit, generous-but-bounded timeouts close that.
     public NtfyClient(@Value("${app.ntfy.base-url}") String ntfyBaseUrl) {
-        this.restClient = RestClient.builder().baseUrl(ntfyBaseUrl).build();
+        JdkClientHttpRequestFactory requestFactory =
+                new JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        this.restClient = RestClient.builder().baseUrl(ntfyBaseUrl).requestFactory(requestFactory).build();
     }
 
     /** POST {ntfyBaseUrl}/{topic} with the message as a plain-text body. Throws on
