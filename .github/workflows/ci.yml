@@ -36,7 +36,7 @@ jobs:
       matrix:
         # Static list, mirrors build-publish.yml (ADR 0008). Add a service
         # here the same day it's added to build-publish.yml's matrix.
-        service: [api, workers]
+        service: [api, workers, watchlist-service]
     steps:
       - uses: actions/checkout@v7
 
@@ -51,20 +51,24 @@ jobs:
           push: false
           load: true
 
-      - name: Start Postgres for api smoke test
+      - name: Start Postgres for api/watchlist-service smoke test
         # api's DataSource/Flyway migrate at startup and fail fast if the
         # database is unreachable at all (services#4, ADR 0012) --
         # unlike the Kafka client below, which just retries in the
         # background, a resolvable-but-empty host isn't enough here.
-        # workers doesn't touch Postgres, so this only runs for api.
-        if: matrix.service == 'api'
+        # watchlist-service (backlog #53) has the identical shape (Flyway +
+        # JPA against its own Postgres); workers touches neither, so this
+        # only runs for the two of them.
+        if: matrix.service == 'api' || matrix.service == 'watchlist-service'
         run: |
           docker network create smoke-net
           docker run -d --name smoke-postgres --network smoke-net \
-            -e POSTGRES_DB=api -e POSTGRES_USER=api -e POSTGRES_PASSWORD=api \
+            -e POSTGRES_DB=${{ matrix.service == 'api' && 'api' || 'watchlist' }} \
+            -e POSTGRES_USER=${{ matrix.service == 'api' && 'api' || 'watchlist' }} \
+            -e POSTGRES_PASSWORD=${{ matrix.service == 'api' && 'api' || 'watchlist' }} \
             postgres:16-alpine
           for i in $(seq 1 30); do
-            docker exec smoke-postgres pg_isready -U api && break
+            docker exec smoke-postgres pg_isready -U ${{ matrix.service == 'api' && 'api' || 'watchlist' }} && break
             sleep 1
           done
 
@@ -82,9 +86,9 @@ jobs:
         # comes up. localhost always resolves; the client just gets
         # connection-refused in the background instead, which it retries
         # without failing the app -- good enough for "does the image
-        # boot", the only thing this step checks. api additionally gets
-        # SPRING_DATASOURCE_URL pointed at the live smoke-postgres
-        # container started above, on the same Docker network.
+        # boot", the only thing this step checks. api/watchlist-service
+        # additionally get SPRING_DATASOURCE_URL pointed at the live
+        # smoke-postgres container started above, on the same Docker network.
         run: |
           set -e
           extra_args=(-e KAFKA_BOOTSTRAP_SERVERS=localhost:9092)
@@ -93,6 +97,11 @@ jobs:
               -e SPRING_DATASOURCE_URL=jdbc:postgresql://smoke-postgres:5432/api \
               -e SPRING_DATASOURCE_USERNAME=api \
               -e SPRING_DATASOURCE_PASSWORD=api)
+          elif [ "${{ matrix.service }}" = "watchlist-service" ]; then
+            extra_args+=(--network smoke-net \
+              -e SPRING_DATASOURCE_URL=jdbc:postgresql://smoke-postgres:5432/watchlist \
+              -e SPRING_DATASOURCE_USERNAME=watchlist \
+              -e SPRING_DATASOURCE_PASSWORD=watchlist)
           fi
           docker run -d --name smoke -p 8080:8080 "${extra_args[@]}" adamastorx/${{ matrix.service }}:pr-${{ github.event.pull_request.number }}
           up=""
@@ -110,7 +119,7 @@ jobs:
           done
           docker logs smoke
           docker rm -f smoke
-          if [ "${{ matrix.service }}" = "api" ]; then
+          if [ "${{ matrix.service }}" = "api" ] || [ "${{ matrix.service }}" = "watchlist-service" ]; then
             docker rm -f smoke-postgres
             docker network rm smoke-net
           fi

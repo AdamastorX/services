@@ -1,6 +1,5 @@
 package com.adamastorx.api.workitem;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -15,11 +14,13 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Proves both halves of services#4's AC (ADR 0012: reads/writes to
  * PostgreSQL) and services#3's AC (ADR 0011: the async Kafka path):
- * {@code POST /work-items} persists a {@link WorkItemEntity} row *before*
- * publishing to Kafka — if the DB write fails, nothing gets published —
- * then {@code GET} proves the row is actually there. No validation
- * beyond "a message was supplied"; this is still a scaffold/proof, real
- * domain endpoints arrive with a future issue.
+ * {@code POST /work-items} persists a {@link WorkItemEntity} row and an
+ * outbox_events row in one transaction (backlog #16, ADR 0026 --
+ * {@link WorkItemOutboxService}, superseding the old direct {@code
+ * WorkItemProducer.publish()} call this class used to make here). {@code
+ * GET} proves the row is actually there. No validation beyond "a message
+ * was supplied"; this is still a scaffold/proof, real domain endpoints
+ * arrive with a future issue.
  *
  * <p>{@code GET /work-items/{id}} is fronted by {@link WorkItemCacheService}
  * (services#5, ADR 0016) — cache-aside, read path only: a hit skips
@@ -35,23 +36,20 @@ public class WorkItemController {
 
     private final WorkItemJpaRepository repository;
 
-    private final WorkItemProducer producer;
+    private final WorkItemOutboxService outboxService;
 
     private final WorkItemCacheService cache;
 
-    public WorkItemController(WorkItemJpaRepository repository, WorkItemProducer producer, WorkItemCacheService cache) {
+    public WorkItemController(
+            WorkItemJpaRepository repository, WorkItemOutboxService outboxService, WorkItemCacheService cache) {
         this.repository = repository;
-        this.producer = producer;
+        this.outboxService = outboxService;
         this.cache = cache;
     }
 
     @PostMapping("/work-items")
     public ResponseEntity<WorkItem> create(@RequestBody Map<String, String> body) {
-        WorkItemEntity entity = new WorkItemEntity(UUID.randomUUID(), body.get("message"), Instant.now());
-        repository.save(entity);
-
-        WorkItem workItem = toWorkItem(entity);
-        producer.publish(workItem);
+        WorkItem workItem = outboxService.createAndEnqueue(body.get("message"));
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(workItem);
     }
 

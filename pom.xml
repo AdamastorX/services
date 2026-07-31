@@ -23,6 +23,7 @@
   <modules>
     <module>api</module>
     <module>workers</module>
+    <module>watchlist-service</module>
   </modules>
 
   <properties>
