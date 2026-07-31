@@ -81,7 +81,7 @@ public class NotificationRelay {
      * other pods/ticks) before the actual, potentially slow, ntfy HTTP call.
      */
     private void attemptDelivery(UUID deliveryId) {
-        if (deliveryRepository.claim(deliveryId, Instant.now()) == 0) {
+        if (claim(deliveryId) == 0) {
             // Lost the race (another tick/pod claimed it first) -- normal, not an error.
             return;
         }
@@ -109,6 +109,27 @@ public class NotificationRelay {
         } catch (Exception ex) {
             recordFailure(delivery, ex);
         }
+    }
+
+    /**
+     * Found live (backlog #53's own real-cluster crash test, not a unit test):
+     * Spring Data JPA does <em>not</em> automatically wrap a custom
+     * {@code @Modifying} query method in a transaction just because it's called
+     * from a repository proxy -- unlike the CRUD methods {@code SimpleJpaRepository}
+     * itself implements (which are transactional by default), a hand-written
+     * {@code @Query}/{@code @Modifying} method throws {@code
+     * jakarta.persistence.TransactionRequiredException} if invoked with no active
+     * transaction. {@link #attemptDelivery} used to call {@link
+     * DeliveryJpaRepository#claim} directly with no transaction wrapping it at
+     * all -- worked in this class's own unit-shaped assumptions, broke the first
+     * time it ran for real against the live cluster after a genuine pod kill and
+     * restart exercised the relay's very first tick. Same fix shape as {@link
+     * #markSent}/{@link #recordFailure}/{@link #deadLetter} below, just missing
+     * here originally.
+     */
+    @Transactional
+    int claim(UUID deliveryId) {
+        return deliveryRepository.claim(deliveryId, Instant.now());
     }
 
     @Transactional
