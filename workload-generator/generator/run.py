@@ -141,13 +141,31 @@ def main() -> None:
     config_path = Path(os.environ.get("CONFIG_PATH", DEFAULT_CONFIG_PATH))
     heartbeat_path = Path(os.environ.get("HEARTBEAT_PATH", DEFAULT_HEARTBEAT_PATH))
     seed_env = os.environ.get("GENERATOR_SEED")
+    # backlog #56: this generator's own key against the api-key-auth Traefik
+    # middleware, sourced from the workload-generator-api-key Secret via
+    # secretKeyRef (platform/kubernetes/workload-generator/deployment.yaml),
+    # never hardcoded. CA_BUNDLE_PATH defaults to the mounted copy of the
+    # project's self-signed adamastorx-ca root (api's public Ingress serves
+    # that CA's cert, not a publicly-trusted one -- see
+    # platform/kubernetes/cert-manager-issuers/README.md) so `requests`
+    # verifies it instead of either failing closed or being told to skip
+    # verification entirely.
+    api_key = os.environ.get("API_KEY")
+    ca_bundle_path = os.environ.get("CA_BUNDLE_PATH", client_mod.DEFAULT_CA_BUNDLE_PATH)
+    verify = ca_bundle_path if os.path.exists(ca_bundle_path) else True
 
     rng = random.Random(int(seed_env)) if seed_env else random.Random()
-    client = client_mod.ApiClient(base_url=api_base_url)
+    client = client_mod.ApiClient(base_url=api_base_url, api_key=api_key, verify=verify)
     created_ids: "collections.deque[str]" = collections.deque(maxlen=CREATED_IDS_MAXLEN)
 
     cfg = config_mod.load_config(config_path, None)
-    log_event(event="generator_started", api_base_url=api_base_url, user_agent=client_mod.USER_AGENT, config=cfg.__dict__)
+    log_event(
+        event="generator_started",
+        api_base_url=api_base_url,
+        user_agent=client_mod.USER_AGENT,
+        api_key_configured=bool(api_key),
+        config=cfg.__dict__,
+    )
 
     next_request_at = time.monotonic()
     last_summary_at = time.monotonic()

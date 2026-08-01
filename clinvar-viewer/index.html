@@ -67,6 +67,15 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/igv@2.15.11/dist/igv.min.js"></script>
+  <!-- backlog #56: defines ADAMASTORX_API_KEY. Mounted from the
+       clinvar-viewer-api-key Secret at deploy time (not baked into the
+       image) -- see platform/kubernetes/clinvar-viewer/deployment.yaml.
+       Loaded before app.js so ADAMASTORX_API_KEY exists when app.js
+       evaluates its top-level `const API_KEY = ...` line. If the
+       Secret/volume mount is ever missing, nginx 404s this file and
+       app.js's `typeof ADAMASTORX_API_KEY !== "undefined"` guard falls
+       back to null rather than throwing a ReferenceError. -->
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

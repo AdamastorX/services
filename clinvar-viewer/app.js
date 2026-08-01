@@ -5,8 +5,32 @@
 // same-origin-only). No mock data, no bundled fixtures -- every result
 // shown here is whatever the live cluster's clinvar-service actually
 // has ingested right now.
+//
+// backlog #56: every call to api now also carries this tenant's own key
+// as HTTP Basic auth, checked by the api-key-auth Traefik middleware on
+// api's Ingress before the request ever reaches the pod.
+// ADAMASTORX_API_KEY comes from config.js (loaded below, before this
+// script -- see index.html), which is rendered from the
+// clinvar-viewer-api-key Secret at deploy time
+// (platform/kubernetes/clinvar-viewer/deployment.yaml). Stated plainly,
+// not glossed over: a key shipped inside a static page served to any
+// browser that loads it is not a real secret boundary -- anyone can read
+// it via view-source. It still does real, honest work here (per-tenant
+// attribution and rate limiting at the edge, matching this item's AC),
+// it just isn't -- and cannot be, for a client-side-only app with no
+// backend of its own -- a confidentiality control. See the decision note
+// (docs/adr/0027 in the adamastorx repo) for the full reasoning.
 
 const API_BASE = "https://api.local.adamastorx.test";
+const API_KEY = typeof ADAMASTORX_API_KEY !== "undefined" ? ADAMASTORX_API_KEY : null;
+
+function authHeaders(extra = {}) {
+  const headers = { ...extra };
+  if (API_KEY) {
+    headers.Authorization = "Basic " + btoa(`clinvar-viewer:${API_KEY}`);
+  }
+  return headers;
+}
 
 const connDot = document.getElementById("conn-dot");
 const connLabel = document.getElementById("conn-label");
@@ -39,7 +63,7 @@ async function lookup(rsid) {
   let response;
   try {
     response = await fetch(`${API_BASE}/variants/lookup?rsid=${encodeURIComponent(rsid)}`, {
-      headers: { Accept: "application/json" },
+      headers: authHeaders({ Accept: "application/json" }),
     });
   } catch (err) {
     setConn("err", "unreachable");
@@ -54,6 +78,15 @@ async function lookup(rsid) {
   if (response.status === 404) {
     setConn("ok", "clinvar-service reachable");
     showError(`No ClinVar record found for ${rsid} in the currently-ingested release.`);
+    return;
+  }
+  if (response.status === 401) {
+    setConn("err", "HTTP 401");
+    showError(
+      `api rejected this page's key (HTTP 401, backlog #56's api-key-auth ` +
+        `Traefik middleware). config.js may be missing or stale -- see ` +
+        `platform/kubernetes/clinvar-viewer/deployment.yaml.`
+    );
     return;
   }
   if (!response.ok) {
@@ -158,6 +191,20 @@ document.querySelectorAll(".chip").forEach((chip) => {
 
 // Ping /healthz-equivalent on load so the connection dot reflects
 // reality immediately, not just "unknown" until the first search.
+//
+// Deliberately NOT sending the backlog #56 key here, and left on
+// no-cors: /actuator/health has no @CrossOrigin config on the api side
+// (only VariantLookupController does), so a normal 'cors'-mode request
+// would fail the browser's CORS check outright rather than return a
+// real status -- switching mode to add the header would make this
+// *less* accurate, not more. `no-cors` mode also cannot carry a custom
+// Authorization header at all (browsers restrict no-cors requests to
+// CORS-safelisted headers), so this ping was never going to be
+// authenticated either way. Net effect, stated plainly: this dot means
+// "the network path to api's Ingress is up," not "this page is
+// authorized" -- the real authorization signal is whatever `lookup()`
+// above gets back on an actual search (including a real 401 if the key
+// is missing/stale, handled explicitly there).
 fetch(`${API_BASE}/actuator/health`, { mode: "no-cors" })
   .then(() => setConn("ok", "clinvar-service reachable"))
   .catch(() => setConn("err", "api unreachable"));

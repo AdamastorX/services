@@ -1,10 +1,21 @@
-"""Thin HTTP client against `api`, over in-cluster Kubernetes Service DNS
-(backlog #45: "Access `api` the same way anything else in-cluster does...
-this is an internal, always-on workload, not a client hitting the public
+"""Thin HTTP client against `api`.
+
+Originally went straight to in-cluster Kubernetes Service DNS (backlog
+#45: "Access `api` the same way anything else in-cluster does... this is
+an internal, always-on workload, not a client hitting the public
 hostname" -- same `api.api.svc.cluster.local` pattern `clinvar-service`'s
-`base-url` default and every Deployment env var in this project already
-use, e.g. `services/api/src/main/resources/application.yml`'s own
-`clinvar-service.base-url`).
+`base-url` default uses). Backlog #56 moves this generator onto `api`'s
+public Ingress hostname instead (`API_BASE_URL` now defaults to
+`https://api.local.adamastorx.test`, resolved to the node's real IP via
+the Deployment's `hostAliases` -- see
+`platform/kubernetes/workload-generator/deployment.yaml`), specifically
+so this generator's synthetic traffic is subject to the same
+Traefik-middleware auth/rate-limit enforced on every other public caller
+and attributable *at the edge* by its own key, not only by the
+`traffic_source="synthetic"` metric label below. Direct Service-DNS
+access is still a legitimate in-cluster pattern for anything that isn't
+exercising the edge deliberately (`clinvar-service`'s own calls to `api`
+are unaffected by this change).
 
 Every request this client makes carries `USER_AGENT`, which must start
 with the exact same prefix as `SyntheticTrafficObservationConvention
@@ -15,6 +26,15 @@ of this generator's requests show up as `traffic_source="synthetic"` on
 `api`'s own `http_server_requests_seconds_count` metric (backlog #45 AC:
 "distinguishable from real manual traffic at query time"), independent of
 whatever this file logs on its own side.
+
+If `api_key` is supplied (backlog #56, `API_KEY` env var, sourced from
+the `workload-generator-api-key` Secret -- see
+`platform/bootstrap/create-stateful-secrets.sh`), every request also
+carries HTTP Basic auth as tenant `workload-generator`, checked by the
+`api-key-auth` Traefik middleware on `api`'s Ingress
+(`platform/kubernetes/api/middlewares.yaml`) before the request ever
+reaches the pod. `AUTH_USERNAME` below must match the username field of
+that tenant's line in the `api-tenant-keys` htpasswd Secret exactly.
 """
 
 from __future__ import annotations
@@ -28,11 +48,21 @@ import requests
 
 log = logging.getLogger(__name__)
 
-DEFAULT_API_BASE_URL = "http://api.api.svc.cluster.local"
+DEFAULT_API_BASE_URL = "https://api.local.adamastorx.test"
+
+# Mounted from the adamastorx-ca ConfigMap (mirrored into this workload's
+# own namespace by the bootstrap script -- see
+# platform/kubernetes/workload-generator/deployment.yaml). Not present in
+# local/test runs, where callers pass verify=True or their own path.
+DEFAULT_CA_BUNDLE_PATH = "/etc/workload-generator/ca/ca.crt"
 
 # Must match SyntheticTrafficObservationConvention.SYNTHETIC_USER_AGENT_PREFIX
 # in services/api exactly -- see module docstring.
 USER_AGENT = "AdamastorX-WorkloadGenerator/1.0 (+backlog-45; synthetic traffic, not a real user)"
+
+# Must match this tenant's username in the api-tenant-keys htpasswd Secret
+# (backlog #56) -- see module docstring.
+AUTH_USERNAME = "workload-generator"
 
 # (connect timeout, read timeout) seconds. Short and deliberate: a
 # generator that hangs on a slow/unavailable downstream (the exact ~30-60s
@@ -66,11 +96,28 @@ class ApiClient:
     request.
     """
 
-    def __init__(self, base_url: str = DEFAULT_API_BASE_URL, timeout=DEFAULT_TIMEOUT):
+    def __init__(
+        self,
+        base_url: str = DEFAULT_API_BASE_URL,
+        timeout=DEFAULT_TIMEOUT,
+        api_key: Optional[str] = None,
+        verify: "bool | str" = True,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers["User-Agent"] = USER_AGENT
+        self.session.verify = verify
+        if api_key:
+            # requests.Session.auth handles the base64(user:pass) encoding
+            # and the Authorization: Basic header on every request made
+            # through this session -- no need to build it by hand.
+            self.session.auth = (AUTH_USERNAME, api_key)
+        else:
+            log.warning(
+                "ApiClient created with no api_key -- requests to api's public Ingress "
+                "will be rejected 401 by the api-key-auth Traefik middleware (backlog #56)"
+            )
 
     def _request(self, action: str, method: str, path: str, **kwargs) -> RequestOutcome:
         url = f"{self.base_url}{path}"
