@@ -219,6 +219,68 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
 
+  sentiment_analyzer:
+    # backlog #80, ADR 0029: this project's second non-JVM component
+    # (after clinvar-service, ADR 0019) and its first Python Kafka
+    # *consumer* -- mirrors clinvar_service's job shape (test, then
+    # build+scan the image, plus the same fs dependency scan), since it's
+    # the same toolchain (Python, not Maven) and the same Trivy
+    # filesystem/Python-dependency scan mode clinvar_service already
+    # established, not the Java-shaped `build`/`scan` jobs above.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sentiment-analyzer
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sentiment-analyzer/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        # No SENTIMENT_ANALYZER_TEST_KAFKA_BOOTSTRAP_SERVERS override
+        # here -- lets tests/conftest.py's testcontainers[kafka] fallback
+        # spin up a real Kafka broker itself (Docker is available on this
+        # runner, same as clinvar_service's own Postgres testcontainers
+        # fallback above), the same Testcontainers-based culture the Java
+        # side's tests already use, rather than special-casing CI with a
+        # services: container.
+        run: pytest -q
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image for scanning (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: sentiment-analyzer
+          tags: adamastorx/sentiment-analyzer:pr-${{ github.event.pull_request.number }}
+          push: false
+          load: true
+
+      - name: Scan image for critical/high CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: adamastorx/sentiment-analyzer:pr-${{ github.event.pull_request.number }}
+          scan-type: image
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Scan Python dependencies for CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: sentiment-analyzer
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
   workload_generator:
     # backlog #45: this project's third non-JVM component (after
     # clinvar-service and clinvar-viewer) -- Python, no in-image HTTP
@@ -304,7 +366,7 @@ jobs:
           ignore-unfixed: true
 
   ci:
-    needs: [build, scan, clinvar_service, workload_generator, clinvar_viewer]
+    needs: [build, scan, clinvar_service, sentiment_analyzer, workload_generator, clinvar_viewer]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -313,12 +375,14 @@ jobs:
           if [ "${{ needs.build.result }}" != "success" ] \
             || [ "${{ needs.scan.result }}" != "success" ] \
             || [ "${{ needs.clinvar_service.result }}" != "success" ] \
+            || [ "${{ needs.sentiment_analyzer.result }}" != "success" ] \
             || [ "${{ needs.workload_generator.result }}" != "success" ] \
             || [ "${{ needs.clinvar_viewer.result }}" != "success" ]; then
             echo "One or more jobs failed:"
             echo "  build:              ${{ needs.build.result }}"
             echo "  scan:               ${{ needs.scan.result }}"
             echo "  clinvar_service:    ${{ needs.clinvar_service.result }}"
+            echo "  sentiment_analyzer: ${{ needs.sentiment_analyzer.result }}"
             echo "  workload_generator: ${{ needs.workload_generator.result }}"
             echo "  clinvar_viewer:     ${{ needs.clinvar_viewer.result }}"
             exit 1

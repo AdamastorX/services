@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1
+# testcontainers[kafka] (not [postgres], unlike clinvar-service) -- this
+# service's own integration test needs a real Kafka broker, not Postgres.
+testcontainers[kafka]==4.15.0
