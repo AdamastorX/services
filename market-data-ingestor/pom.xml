@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.adamastorx</groupId>
+    <artifactId>services</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>market-data-ingestor</artifactId>
+
+  <name>market-data-ingestor</name>
+  <description>
+    Backlog #78 / ADR 0029 (M13): subscribes to Finnhub's free real-time trade
+    websocket for a fixed watchlist and republishes each tick as a
+    stock.price.tick Kafka event. Java per ADR 0019's rule: generic
+    websocket-client-plus-Kafka-producer messaging work, no domain-specific
+    tooling need that would earn Python. No database: this service holds no
+    state that needs to survive a restart (the watchlist is fixed config, the
+    last-tick-per-ticker map used for the stale-feed gauge is happily rebuilt
+    from live traffic after any restart), so unlike api/watchlist-service it
+    has neither Flyway nor JPA/Postgres.
+  </description>
+
+  <dependencies>
+    <!--
+      No business HTTP API here: spring-boot-starter-webmvc is pulled in
+      solely to give actuator an embedded servlet container so
+      /actuator/health/liveness, /readiness and /actuator/prometheus exist
+      over HTTP for kubelet probes and Prometheus scraping, same as workers
+      (ADR 0011). The one exception is admin.ReconnectController's
+      POST /internal/market-data/force-reconnect, an operational/test hook,
+      not a domain API, so this service still gets no Kubernetes Service
+      (ADR 0009), reached only via port-forward/exec for that endpoint.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!--
+      Registers /actuator/prometheus itself (observability#2, ADR 0014),
+      see api/workers' own pom.xml comment, same gap, same fix.
+    -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <!-- Traces only (observability#1, ADR 0013), same shape as api/workers. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing-bridge-otel</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+    </dependency>
+    <!--
+      spring-kafka is the client library; spring-boot-kafka is Boot 4's
+      (modularised) autoconfiguration for it, same gap api/workers already
+      document in their own pom.xml.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-kafka</artifactId>
+    </dependency>
+    <!--
+      spring-kafka's JsonSerializer is built on classic Jackson 2
+      (com.fasterxml.jackson.*), not the Jackson 3 Boot 4.1's
+      starter-webmvc pulls in by default, same reasoning as every other
+      module's pom.xml.
+    -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!--
+      StockPriceTick carries java.time.Instant fields (exchangeTimestamp,
+      ingestionTimestamp) that classic Jackson 2's ObjectMapper cannot
+      serialize on its own (found live via this module's own test suite,
+      not assumed from documentation): spring-kafka's JsonSerializer's
+      no-arg constructor builds its ObjectMapper via
+      JacksonUtils.enhancedObjectMapper(), which auto-registers any
+      Jackson module found on the classpath via ServiceLoader, so simply
+      adding this dependency (no extra registration code) is enough once
+      it's present.
+    -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-jsr310</artifactId>
+    </dependency>
+    <!--
+      No websocket-client library here, deliberately: the Finnhub trade feed
+      is a plain RFC 6455 websocket, and the JDK itself has shipped a
+      built-in client (java.net.http.WebSocket, via HttpClient.newWebSocket
+      Builder()) since Java 11, no reason to add Tyrus/spring-websocket/
+      okhttp for something the JDK already does, "boring, well-understood
+      tools" (ADR 0021) applied to a dependency choice this time, not a
+      framework one.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
