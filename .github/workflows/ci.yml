@@ -36,7 +36,7 @@ jobs:
       matrix:
         # Static list, mirrors build-publish.yml (ADR 0008). Add a service
         # here the same day it's added to build-publish.yml's matrix.
-        service: [api, workers, watchlist-service, news-ingestor]
+        service: [api, workers, watchlist-service, news-ingestor, market-data-ingestor]
     steps:
       - uses: actions/checkout@v7
 
@@ -102,6 +102,19 @@ jobs:
               -e SPRING_DATASOURCE_URL=jdbc:postgresql://smoke-postgres:5432/watchlist \
               -e SPRING_DATASOURCE_USERNAME=watchlist \
               -e SPRING_DATASOURCE_PASSWORD=watchlist)
+          elif [ "${{ matrix.service }}" = "market-data-ingestor" ]; then
+            # FINNHUB_API_KEY has no baked-in default (application.yml,
+            # same reasoning as SPRING_DATASOURCE_PASSWORD) -- Spring fails
+            # to resolve the placeholder and the app never boots without
+            # *some* value. A dummy key is fine here because
+            # APP_FINNHUB_AUTO_CONNECT=false (relaxed-binding env var for
+            # app.finnhub.auto-connect) stops this smoke test from ever
+            # trying to use it against the real Finnhub -- "does the image
+            # boot" must not depend on reaching a real external vendor from
+            # a CI runner (see FinnhubWebSocketClient's own javadoc on this
+            # flag).
+            extra_args+=(-e FINNHUB_API_KEY=smoke-test-dummy-key \
+              -e APP_FINNHUB_AUTO_CONNECT=false)
           fi
           docker run -d --name smoke -p 8080:8080 "${extra_args[@]}" adamastorx/${{ matrix.service }}:pr-${{ github.event.pull_request.number }}
           up=""

@@ -25,6 +25,7 @@
     <module>workers</module>
     <module>watchlist-service</module>
     <module>news-ingestor</module>
+    <module>market-data-ingestor</module>
   </modules>
 
   <properties>

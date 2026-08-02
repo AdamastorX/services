@@ -1,0 +1,83 @@
+spring:
+  application:
+    name: market-data-ingestor
+  kafka:
+    # In-cluster Kubernetes Service DNS default (mirrors ADR 0010/0011's
+    # pattern); overridden at deploy time by KAFKA_BOOTSTRAP_SERVERS
+    # (platform's concern).
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka.kafka.svc.cluster.local:9092}
+    producer:
+      # Key/value serializers and the JSON add-type-headers=false wiring
+      # are set explicitly in StockPriceTickProducerConfig (typed
+      # KafkaTemplate<String, StockPriceTick>), same reasoning as api's
+      # own producer -- these two lines are unused defaults, kept only so
+      # `spring.kafka.producer.*` isn't silently absent from this file
+      # the way a reader familiar with api/application.yml would expect.
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # health (default) + prometheus (observability#2, ADR 0014) --
+        # same gap/fix every other module's application.yml documents.
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # market_data_tick_publish_latency is built with
+        # .publishPercentileHistogram() directly in
+        # StockPriceTickPublisher (ADR 0020's real _bucket-series
+        # discipline) -- listed here too only for http.server.requests,
+        # same as every other module.
+        http.server.requests: true
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          # In-cluster Kubernetes Service DNS default (observability#1,
+          # ADR 0013); overridden at deploy time by OTLP_COLLECTOR_ENDPOINT.
+          endpoint: ${OTLP_COLLECTOR_ENDPOINT:http://otel-collector.otel.svc.cluster.local:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0
+
+app:
+  market-data:
+    # Backlog #78's AC: "5-8 well-known large-cap US tickers ... finalized
+    # at implementation" -- the AC's own suggested 5: Apple, Microsoft,
+    # Alphabet, Amazon, Tesla. All five trade on Nasdaq/NYSE and are among
+    # the most liquid US equities, which is exactly what makes the
+    # stale-feed threshold below a meaningful signal rather than noise.
+    tickers:
+      - AAPL
+      - MSFT
+      - GOOGL
+      - AMZN
+      - TSLA
+    stock-price-tick-topic: stock.price.tick
+    # See MarketDataProperties' own javadoc for why 5 minutes.
+    stale-threshold: PT5M
+  finnhub:
+    # No baked-in default -- a real credential has no sane public one
+    # (same reasoning api/application.yml's SPRING_DATASOURCE_PASSWORD
+    # comment already states). Sourced from the FINNHUB_API_KEY env var
+    # at deploy time, populated via secretKeyRef against the
+    # already-provisioned finnhub-api-key Secret (backlog #36's
+    # out-of-band pattern; platform/kubernetes/market-data-ingestor/deployment.yaml).
+    token: ${FINNHUB_API_KEY}
+    websocket-uri: wss://ws.finnhub.io
+    reconnect-delay: PT2S
+    idle-timeout: PT45S
+    ping-interval: PT15S
+    # Real deployments never set this (defaults true, FinnhubWebSocketClient
+    # connects on ApplicationReadyEvent). Test properties set it false --
+    # see that class's own javadoc on why.
+    auto-connect: true
