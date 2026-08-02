@@ -27,7 +27,7 @@ jobs:
         # Static list, not dynamic module detection (YAGNI/boring per ADR
         # 0008). Add a service to this list the same day its module is
         # scaffolded.
-        service: [api, workers, watchlist-service]
+        service: [api, workers, watchlist-service, news-ingestor]
     steps:
       - uses: actions/checkout@v7
 

@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.adamastorx</groupId>
+    <artifactId>services</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>news-ingestor</artifactId>
+
+  <name>news-ingestor</name>
+  <description>
+    Backlog #79 (M13, ADR 0029): polls WSJ Markets + MarketWatch RSS on a fixed
+    cadence, matches article title/summary against a fixed watchlist of ticker
+    symbols plus a small alias list via case-insensitive substring matching
+    (explicitly not NER/NLP, ADR 0021), dedupes by article GUID/link, and
+    publishes news.article.published only for matched articles. Java per ADR
+    0019's rule -- RSS polling plus substring matching is generic
+    HTTP-poll-plus-Kafka-producer messaging work, the same shape
+    api/workers/watchlist-service already are, no domain-specific-tooling
+    reason to leave Java.
+  </description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- /actuator/prometheus (ADR 0014/0020), same as api/workers/watchlist-service. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <!-- Tracing (ADR 0013), same pattern as the other services. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing-bridge-otel</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-kafka</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!--
+      Found live running FeedPollerIntegrationTest: the hand-built
+      JsonSerializer<ArticlePublishedEvent> (NewsPublisherKafkaConfig)
+      threw "Can't serialize data ... Java 8 date/time type
+      java.time.Instant not supported by default" — jackson-databind alone
+      has no java.time support, and this module doesn't pull in
+      spring-boot-starter-json/-webmvc's usual auto-registered JSR-310
+      module the way a typed REST controller response would. Added
+      explicitly, version managed by the parent POM's Jackson 2 BOM (same
+      as jackson-databind itself, ADR 0007) — JsonSerializer's default
+      ObjectMapper calls ObjectMapper.findModules() internally, which
+      picks this module up automatically via classpath SPI once present,
+      no extra wiring needed in NewsPublisherKafkaConfig.
+    -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-jsr310</artifactId>
+    </dependency>
+    <!--
+      No JPA/Postgres/Flyway here, unlike api/watchlist-service: this
+      service is deliberately stateless — dedup state is a small,
+      bounded, in-memory LRU (ArticleDedupService), not a persisted table.
+      A pod restart re-seeing a handful of already-published articles for
+      one poll cycle is an accepted, stated v1 gap (see
+      ArticleDedupService's javadoc), not worth a dedicated Postgres
+      instance and its own two-CI/two-base-image tax (ADR 0021's
+      anti-gold-plating discipline, the same call the Simplification
+      section of the backlog makes about paying complexity only where it
+      earns its place).
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
