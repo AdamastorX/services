@@ -104,6 +104,22 @@ class SentimentConsumerWorker:
             self._thread.join(timeout=timeout_s)
         self._consumer.close()
 
+    def is_alive(self) -> bool:
+        """Real liveness signal for `GET /healthz` (`app/routes/health.py`)
+        -- found live during review: without this, an uncaught exception
+        inside `_run`'s loop body (e.g. an unexpected non-string
+        `headline` reaching `VaderScorer.score`) would silently kill this
+        daemon thread forever while `/healthz` kept returning `{"status":
+        "UP"}` unconditionally -- the pod would report Healthy/Ready with
+        no consumer actually running, and Kubernetes would never restart
+        it. `_run` itself now also guards its per-message work in a
+        try/except so a single bad message can't reach this state in the
+        first place; this method is the second, independent layer -- if
+        the thread ever *does* die despite that, this makes it a real,
+        observable, restart-triggering failure instead of a silent one.
+        """
+        return self._thread is not None and self._thread.is_alive()
+
     def _run(self) -> None:
         logger.info("Sentiment consumer loop running, topic=%s", self._consume_topic)
         while not self._stop_event.is_set():
@@ -117,8 +133,29 @@ class SentimentConsumerWorker:
                 CONSUME_ERRORS_TOTAL.inc()
                 continue
 
-            self._handle_message(msg.value())
-            self._consumer.commit(message=msg, asynchronous=False)
+            try:
+                self._handle_message(msg.value())
+                self._consumer.commit(message=msg, asynchronous=False)
+            except Exception:
+                # Found live during review: neither ArticlePublishedEvent
+                # parsing nor the publish() call inside
+                # _score_and_publish_one can escape uncaught (both have
+                # their own try/except), but VaderScorer.score() itself
+                # was not guarded -- an unexpected input (e.g. a
+                # malformed message that parses but yields a non-string
+                # headline) would otherwise propagate out of this loop
+                # and kill the daemon thread for the rest of the
+                # process's life, with is_alive() (above) the only thing
+                # left to notice. Treated the same as every other
+                # per-message failure mode here: logged, counted, this
+                # message's offset is not committed (so a restarted
+                # consumer would re-fetch it -- consistent with this
+                # class's own stated at-least-once/no-idempotency model,
+                # not a new gap), the loop keeps running for the next
+                # message rather than the whole thread going down over
+                # one bad one.
+                logger.error("Unexpected error handling a news.article.published message, skipping", exc_info=True)
+                CONSUME_ERRORS_TOTAL.inc()
 
     def _handle_message(self, raw_value: bytes | None) -> None:
         if raw_value is None:
