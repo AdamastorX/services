@@ -36,7 +36,7 @@ jobs:
       matrix:
         # Static list, mirrors build-publish.yml (ADR 0008). Add a service
         # here the same day it's added to build-publish.yml's matrix.
-        service: [api, workers, watchlist-service]
+        service: [api, workers, watchlist-service, news-ingestor]
     steps:
       - uses: actions/checkout@v7
 

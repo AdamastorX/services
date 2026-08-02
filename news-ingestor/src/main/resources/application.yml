@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: news-ingestor
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka.kafka.svc.cluster.local:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_COLLECTOR_ENDPOINT:http://otel-collector.otel.svc.cluster.local:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0
+
+app:
+  # Fixed cadence (AC: "e.g. every 5 minutes"). fixedDelay (not fixedRate,
+  # FeedPoller's @Scheduled annotation) -- each poll cycle for both feeds
+  # must fully finish before the countdown to the next one starts, so a
+  # slow/hanging feed this cycle can't cause the next cycle to overlap it.
+  poll-interval-ms: ${NEWS_POLL_INTERVAL_MS:300000}
+  poll-initial-delay-ms: ${NEWS_POLL_INITIAL_DELAY_MS:0}
+  # ADR 0029's two chosen sources, both real HTTP 200 with live, dated
+  # content -- re-verified live (2026-08-02, this implementation session),
+  # not assumed from the ADR alone, since RSS feeds are exactly the kind
+  # of thing that silently changes (CNBC/Reuters/Yahoo all broke the same
+  # way an older reference wouldn't have caught).
+  feeds:
+    - name: wsj-markets
+      url: https://feeds.content.dowjones.io/public/rss/RSSMarketsMain
+    - name: marketwatch
+      url: https://feeds.content.dowjones.io/public/rss/mw_topstories
+  # Fixed watchlist + a small alias list (AC: "not NER/NLP", case-
+  # insensitive substring matching). Same 5 large-cap tickers backlog #78
+  # (market-data-ingestor)'s own AC suggests as its default -- #78 had no
+  # market-data-ingestor PR/module in the services repo yet at the time
+  # this was built, so there was no landed concrete list to coordinate
+  # against; this is the same reasonable default the backlog item itself
+  # names for both services, not an independent guess.
+  watchlist:
+    tickers:
+      AAPL:
+        - Apple
+        - Apple Inc
+      MSFT:
+        - Microsoft
+      GOOGL:
+        - Google
+        - Alphabet
+      AMZN:
+        - Amazon
+      TSLA:
+        - Tesla
+  dedup:
+    # Bounded in-memory LRU (ArticleDedupService) -- comfortably larger
+    # than either feed's real current item count per fetch (WSJ Markets/
+    # MarketWatch each return well under 100 items live), enough headroom
+    # for many poll cycles' worth of turnover between a given article
+    # aging out of a feed and this cache evicting it.
+    max-entries: ${NEWS_DEDUP_MAX_ENTRIES:2000}
+  kafka:
+    news-article-published-topic: news.article.published
+    send-timeout-ms: ${NEWS_KAFKA_SEND_TIMEOUT_MS:5000}
