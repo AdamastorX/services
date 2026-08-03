@@ -26,6 +26,7 @@
     <module>watchlist-service</module>
     <module>news-ingestor</module>
     <module>market-data-ingestor</module>
+    <module>aggregator</module>
   </modules>
 
   <properties>

@@ -1,0 +1,93 @@
+spring:
+  application:
+    name: aggregator
+  kafka:
+    # In-cluster Kubernetes Service DNS default (mirrors every other
+    # module's application.yml); overridden at deploy time by
+    # KAFKA_BOOTSTRAP_SERVERS. spring.kafka.streams.* below has no
+    # bootstrap-servers of its own -- Boot's own defaultKafkaStreamsConfig
+    # bean (spring-boot-kafka's KafkaStreamsAnnotationDrivenConfiguration,
+    # confirmed by inspecting the actual jar) falls back to this same
+    # top-level value via KafkaConnectionDetails, so there is exactly one
+    # place this is ever set, not two that could drift.
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka.kafka.svc.cluster.local:9092}
+    streams:
+      # This project's first Kafka Streams app -- application-id doubles
+      # as the consumer group id for both source topics AND the prefix
+      # for every internal changelog topic this topology creates
+      # (price-window-store-changelog, sentiment-window-store-changelog).
+      application-id: aggregator
+      # No PVC mounted at this path (platform's own deployment.yaml) --
+      # deliberate: every real restart (crash, OOM, reschedule) starts
+      # from an empty state dir and restores fully from the changelog,
+      # the same real recovery path StateStoreRecoveryTest measures and
+      # this module's README records the real numbers for. A PVC here
+      # would let some restarts skip real restoration (whichever ones
+      # land on the same node/volume) and silently invalidate that
+      # measurement's own real-world applicability.
+      state-dir: /tmp/kafka-streams
+      # Kafka Streams' own record-cache, deduplicates repeated updates to
+      # the same (ticker, window) key before they hit the changelog
+      # (default 10MB). Lowered explicitly given this node's tight real
+      # headroom (see platform/kubernetes/aggregator/deployment.yaml's own
+      # resource-sizing comment) -- this milestone's real traffic (a
+      # handful of ticks/scores per ticker per 15-minute window) needs
+      # nowhere near 10MB of buffering to be useful; 1MB is a real,
+      # deliberate ceiling, not a guess that happens to fit.
+      state-store-cache-max-size: 1MB
+      properties:
+        # BoundedRocksDbConfigSetter -- see that class's own javadoc for
+        # the real reasoning (RocksDB's out-of-the-box defaults reserve
+        # several hundred MB per store instance; this app opens two).
+        rocksdb.config.setter: com.adamastorx.aggregator.topology.BoundedRocksDbConfigSetter
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        # aggregator_state_restore_duration_seconds is built with
+        # .publishPercentileHistogram() directly in StateRestoreMetrics
+        # (ADR 0020), listed here too only for http.server.requests, same
+        # as every other module.
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_COLLECTOR_ENDPOINT:http://otel-collector.otel.svc.cluster.local:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0
+
+app:
+  aggregator:
+    stock-price-tick-topic: stock.price.tick
+    news-sentiment-scored-topic: news.sentiment.scored
+    # AC's own suggested default, kept -- see README.md's "ADR 0011,
+    # resolved" section for the real measured state-store-recovery number
+    # this is justified against, not a guess.
+    window: PT15M
+    # Zero grace -- see AggregatorTopology's own javadoc: a real-time
+    # trade-tick/sentiment feed has no accepted late-arrival case worth
+    # extending changelog retention (and therefore restore-on-restart
+    # cost) for.
+    grace: PT0S
+    price-window-store-name: price-window-store
+    sentiment-window-store-name: sentiment-window-store
+    # Same 5 large-cap tickers market-data-ingestor/news-ingestor already
+    # use (see AggregatorProperties' own javadoc for why this is
+    # duplicated, not shared, config).
+    watchlist:
+      - AAPL
+      - MSFT
+      - GOOGL
+      - AMZN
+      - TSLA
