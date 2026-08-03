@@ -91,7 +91,24 @@ public class BoundedRocksDbConfigSetter implements RocksDBConfigSetter {
 
     @Override
     public void setConfig(String storeName, Options options, Map<String, Object> configs) {
-        BlockBasedTableConfig tableConfig = new BlockBasedTableConfig();
+        // Real, second live incident (backlog #85, found on this exact
+        // fix's own first redeploy): a fresh `new BlockBasedTableConfig()`
+        // here, rather than the instance Kafka Streams itself already
+        // attached to `options`, broke RocksDBStore's own internal
+        // metrics-recorder wiring the moment a store was actually opened
+        // against real traffic -- a real
+        // org.apache.kafka.streams.errors.ProcessorStateException ("The
+        // used block-based table format configuration does not expose the
+        // block cache ... Do not provide a new instance of
+        // BlockBasedTableConfig") that took the whole stream client down
+        // (SHUTDOWN_CLIENT), the same silent-but-Healthy-pod failure mode
+        // the first RocksDB/Alpine bug had. Kafka Streams pre-configures
+        // `options` with its own BlockBasedTableConfig before this method
+        // runs specifically so its metrics recorder can introspect it
+        // later -- `options.tableFormatConfig()` retrieves that exact
+        // instance; mutating and reassigning it (not constructing a new
+        // one) is what the exception message itself names as the fix.
+        BlockBasedTableConfig tableConfig = (BlockBasedTableConfig) options.tableFormatConfig();
         tableConfig.setBlockCache(sharedBlockCache());
         tableConfig.setBlockSize(4 * 1024L);
         options.setTableFormatConfig(tableConfig);
