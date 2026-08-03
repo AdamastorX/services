@@ -44,6 +44,25 @@ ARG MODULE
 # wait for Adoptium to republish the tag, pull the fixes in at build time.
 RUN apk update && apk upgrade --no-cache
 
+# Real incident, found live (backlog #81, aggregator's first real sync,
+# 2026-08-03): rocksdbjni's bundled native .so is a standard glibc/libstdc++
+# Linux binary. Alpine's musl-libc base has no libstdc++ by default -- the
+# real, live pod started, Spring/actuator came up fully healthy (this
+# module's readiness probe does not gate on Kafka Streams state, see
+# platform's own deployment.yaml comment), but the Kafka Streams client
+# itself failed with a real UnsatisfiedLinkError ("Error loading shared
+# library libstdc++.so.6: No such file or directory") the moment it tried to
+# actually open a RocksDB-backed state store against a real, reachable
+# broker -- a failure mode neither this module's own CI Docker smoke test
+# (an unreachable-broker scenario, which never reaches real store-opening)
+# nor local `mvn verify` (runs on the host JVM, not inside this Alpine
+# image) could have caught, only a real cluster sync did. `libstdc++`
+# (Alpine's own musl-compatible package providing this exact library) is
+# the minimal, targeted fix -- confirmed against Alpine's package index,
+# not guessed. Harmless for every other (non-RocksDB) service built from
+# this same shared Dockerfile: a few extra KB, no functional change.
+RUN apk add --no-cache libstdc++ libgcc
+
 # Alpine ships busybox's adduser/addgroup, not shadow-utils' useradd.
 RUN addgroup -g 10001 -S app \
  && adduser -S -D -H -u 10001 -G app -s /bin/false app
