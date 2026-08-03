@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.adamastorx</groupId>
+    <artifactId>services</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>aggregator</artifactId>
+
+  <name>aggregator</name>
+  <description>
+    Backlog #81 (M13, ADR 0029): supersedes/revives #55. A Kafka Streams
+    topology consuming stock.price.tick and news.sentiment.scored,
+    computing windowed rolling-average-sentiment and price-movement
+    aggregates per ticker, served over a small REST query API for #82
+    (visualizer). Java/Spring per ADR 0029 decision 4 -- matches #55's own
+    stated preference and this project's existing Spring/Kafka stack;
+    Kafka Streams is a JVM library, this is squarely Java's home turf (ADR
+    0019).
+  </description>
+
+  <dependencies>
+    <!--
+      This service's whole reason to exist is a REST query API
+      (GET /aggregates/{ticker}) over the topology's own state stores -
+      unlike news-ingestor/market-data-ingestor/sentiment-analyzer,
+      webmvc here is a real business API, not just actuator's servlet
+      container, so it gets a Kubernetes Service (see
+      platform/kubernetes/aggregator/deployment.yaml), unlike those three.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- /actuator/prometheus (ADR 0014/0020), same as every other module. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <!-- Tracing (ADR 0013), same pattern as the other services. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-tracing-bridge-otel</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-micrometer-tracing-opentelemetry</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+    </dependency>
+    <!--
+      spring-kafka is the client library; spring-boot-kafka is Boot 4's
+      (modularised) autoconfiguration for it - same gap every other
+      module's pom.xml documents. This module additionally relies on
+      spring-boot-kafka's KafkaStreamsAnnotationDrivenConfiguration
+      (confirmed by inspecting the actual jar, not assumed from
+      documentation: it auto-provides the "defaultKafkaStreamsConfig"
+      bean @EnableKafkaStreams needs, built from spring.kafka.streams.*
+      properties in application.yml) - this is this project's first
+      Kafka Streams app, so there's no in-repo precedent for this specific
+      autoconfiguration path; verified by compiling and running this
+      module's own tests before opening this PR, not assumed to work.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-kafka</artifactId>
+    </dependency>
+    <!--
+      The actual Kafka Streams library - absent from every other module
+      in this repo (this is the first consumer of it). Pulls in
+      kafka-clients (already used everywhere else) plus rocksdbjni (the
+      state store engine backing every windowed aggregation here) as
+      transitive dependencies - confirmed via `mvn dependency:tree`
+      before writing BoundedRocksDBConfigSetter against it, not assumed
+      from Kafka's own docs.
+    -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-streams</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      TopologyTestDriver - the standard, real tool for testing a Kafka
+      Streams topology's logic without a live/embedded broker (backlog
+      #81's AC: prove the windowed aggregation is correct against real
+      input records for both topics). Used for the correctness tests;
+      the separate real-broker state-store-recovery measurement
+      (StateStoreRecoveryTest) uses spring-kafka-test's EmbeddedKafkaBroker
+      instead, since TopologyTestDriver does not model an actual process
+      restart (see that test's own javadoc for why).
+    -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-streams-test-utils</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>
