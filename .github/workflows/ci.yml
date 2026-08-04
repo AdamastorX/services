@@ -365,8 +365,38 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
 
+  visualizer:
+    # backlog #82, M13, ADR 0029: same shape as clinvar_viewer above --
+    # a static nginx image with no application logic of its own (plain
+    # HTML/CSS/JS, Chart.js loaded from a CDN client-side), reusing that
+    # exact job pattern deliberately (this item's own AC: "no heavier a
+    # build chain than clinvar-viewer's existing precedent"), not a new
+    # one. No test step, just build+scan the image.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image for scanning (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: visualizer
+          tags: adamastorx/visualizer:pr-${{ github.event.pull_request.number }}
+          push: false
+          load: true
+
+      - name: Scan image for critical/high CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: adamastorx/visualizer:pr-${{ github.event.pull_request.number }}
+          scan-type: image
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
   ci:
-    needs: [build, scan, clinvar_service, sentiment_analyzer, workload_generator, clinvar_viewer]
+    needs: [build, scan, clinvar_service, sentiment_analyzer, workload_generator, clinvar_viewer, visualizer]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -377,7 +407,8 @@ jobs:
             || [ "${{ needs.clinvar_service.result }}" != "success" ] \
             || [ "${{ needs.sentiment_analyzer.result }}" != "success" ] \
             || [ "${{ needs.workload_generator.result }}" != "success" ] \
-            || [ "${{ needs.clinvar_viewer.result }}" != "success" ]; then
+            || [ "${{ needs.clinvar_viewer.result }}" != "success" ] \
+            || [ "${{ needs.visualizer.result }}" != "success" ]; then
             echo "One or more jobs failed:"
             echo "  build:              ${{ needs.build.result }}"
             echo "  scan:               ${{ needs.scan.result }}"
@@ -385,6 +416,7 @@ jobs:
             echo "  sentiment_analyzer: ${{ needs.sentiment_analyzer.result }}"
             echo "  workload_generator: ${{ needs.workload_generator.result }}"
             echo "  clinvar_viewer:     ${{ needs.clinvar_viewer.result }}"
+            echo "  visualizer:         ${{ needs.visualizer.result }}"
             exit 1
           fi
           echo "All jobs succeeded."
