@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Market Sentiment Pipeline — AdamastorX</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">AdamastorX</span>
+      <span class="brand-sub">Real-Time Market Sentiment (M13)</span>
+    </div>
+    <div class="provenance">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-label">connecting to aggregator…</span>
+      <span class="sep">·</span>
+      <span id="last-poll">never polled</span>
+    </div>
+  </header>
+
+  <main>
+    <p class="hint">
+      Real data, no mocks — every card below is whatever <code>aggregator</code>'s
+      current 15-minute tumbling window actually holds right now, read from its
+      live <code>GET /aggregates</code>. The price/sentiment lines are built by this
+      page from its own poll history (nothing is stored server-side beyond the
+      current window — see <code>aggregator</code>'s own
+      <code>TickerAggregateResponse</code> javadoc) — they show this browser tab's
+      own session, and reset on reload. It is real and common for a ticker to show
+      no price yet this window (news/ticks are sparse outside active trading hours)
+      or no sentiment yet this window (news is sparser still than ticks) — both are
+      rendered honestly below, not as zero or an error.
+    </p>
+
+    <section class="banner" id="restoring-banner" hidden>
+      aggregator is still restoring its Kafka Streams state store after a
+      restart (a real, expected ~45s window, see its own README) — retrying
+      automatically.
+    </section>
+    <section class="banner banner-err" id="unreachable-banner" hidden>
+      Could not reach <span id="unreachable-host"></span>. This page needs the
+      AdamastorX cluster's Ingress resolvable and its CA trusted — see
+      <code>platform/kubernetes/cert-manager-issuers/README.md</code>.
+    </section>
+
+    <section class="grid" id="ticker-grid"></section>
+  </main>
+
+  <footer>
+    <p>
+      Reads <code>aggregator</code>'s real <code>GET /aggregates</code> (backlog
+      #81) — windowed price/sentiment correlation for a fixed 5-ticker
+      watchlist, ADR 0029/M13. Source:
+      <a href="https://github.com/AdamastorX" target="_blank" rel="noopener">github.com/AdamastorX</a>.
+    </p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <!-- backlog #82: config.js is deploy-time-mounted, same mechanism
+       clinvar-viewer already established (backlog #56) -- a Secret
+       volume-mounted over this exact filename at container start, not
+       baked into the image. Unlike clinvar-viewer (whose API_BASE is a
+       hardcoded const in app.js, since api's hostname predates
+       clinvar-viewer and never changes across environments), this
+       config.js carries API_BASE too: aggregator's own Ingress hostname
+       is new as of this PR and this is the one place it's defined, so
+       deploy time -- not build time -- is where it belongs. See
+       platform/kubernetes/visualizer/deployment.yaml for the mount.
+       Loaded before app.js so both globals exist when app.js evaluates
+       its top-level consts. If the mount is ever missing, nginx 404s
+       this file and app.js's `typeof` guards fall back to a hardcoded
+       real-cluster default rather than throwing. -->
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
