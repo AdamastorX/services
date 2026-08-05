@@ -65,7 +65,7 @@ public class StockPriceTickPublisher {
                     publishLatencyTimer.record(latency);
                     if (ex != null) {
                         publishFailedCounter.increment();
-                        log.warn("Failed to publish stock.price.tick for {}: {}", tick.ticker(), ex.toString());
+                        log.warn("Failed to publish stock.price.tick for {}", tick.ticker(), ex);
                     } else {
                         publishedCounter.increment();
                         log.debug(
