@@ -61,6 +61,14 @@ import org.springframework.stereotype.Component;
  * connection ({@link #subscribeAll}) -- "resumes subscriptions" per the
  * AC, not just a bare reconnect that would leave the feed silent even
  * once the socket itself is back up.
+ *
+ * <p><strong>Backlog #86:</strong> every exception logged here passes the
+ * real {@link Throwable} object to SLF4J (the {@code log.warn(msg, ex)}
+ * overload), not just {@code ex.toString()}/{@code ex.getMessage()} --
+ * found live on 2026-08-05, a real, permanent {@code NoClassDefFoundError}
+ * ran undetected for two days because {@link #onError}'s handler logged
+ * only a bare one-line string, with no stack trace or {@code Caused by}
+ * chain ever captured. Any recurrence is now diagnosable.
  */
 @Component
 public class FinnhubWebSocketClient {
@@ -169,7 +177,7 @@ public class FinnhubWebSocketClient {
                     connecting.set(false);
                     if (error != null) {
                         connectFailureCounter.increment();
-                        log.warn("Finnhub websocket connect failed: {}", error.toString());
+                        log.warn("Finnhub websocket connect failed", error);
                         scheduleReconnect();
                         return;
                     }
@@ -221,7 +229,7 @@ public class FinnhubWebSocketClient {
         try {
             message = objectMapper.readValue(rawMessage, FinnhubMessage.class);
         } catch (Exception e) {
-            log.warn("Failed to parse Finnhub websocket message: {}", e.getMessage());
+            log.warn("Failed to parse Finnhub websocket message", e);
             return;
         }
         if (message.type() == null) {
@@ -291,7 +299,7 @@ public class FinnhubWebSocketClient {
 
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
-            log.warn("Finnhub websocket error: {}", error.toString());
+            log.warn("Finnhub websocket error", error);
             activeSocket.compareAndSet(webSocket, null);
             scheduleReconnect();
         }
