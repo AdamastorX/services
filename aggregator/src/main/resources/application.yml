@@ -50,6 +50,35 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        # Backlog #85(b): the real, deliberate liveness/readiness split --
+        # see KafkaStreamsLivenessHealthIndicator's own javadoc for the
+        # full reasoning. readiness is left untouched (Boot's own default
+        # "readinessState" only, no override here) -- the real ~45s
+        # restore/consumer-group-rejoin window every normal restart goes
+        # through (README.md's "ADR 0011, resolved") must NOT flap the pod
+        # out of the Service's endpoints, so readiness intentionally stays
+        # blind to Kafka Streams' own state; AggregateQueryService's own
+        # 503 already gives a more honest, finer-grained "still restoring"
+        # signal than a flapping readiness probe would.
+        #
+        # liveness DOES now include the real KafkaStreamsLivenessHealth-
+        # Indicator ("kafkaStreams", registered under that explicit bean
+        # name) alongside Boot's own default "livenessState" -- setting
+        # this property at all fully replaces the default group membership
+        # rather than adding to it (confirmed against the actual
+        # spring-boot-health:4.1.0 jar/source,
+        # AvailabilityProbesHealthEndpointGroups#getOrCreateProbeGroup),
+        # which is why livenessState is listed explicitly here too, not
+        # dropped. A genuine, terminal KafkaStreams.State.ERROR (backlog
+        # #85's own real incident shape, twice: services#52/#53) now fails
+        # /actuator/health/liveness and lets Kubernetes actually restart
+        # the pod, instead of a fully-dead-but-"Healthy" pod sitting that
+        # way indefinitely.
+        liveness:
+          include:
+            - livenessState
+            - kafkaStreams
   metrics:
     distribution:
       percentiles-histogram:
