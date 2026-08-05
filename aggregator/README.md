@@ -313,6 +313,12 @@ untouched by this item and remains genuinely open.
   `System.currentTimeMillis()`-anchored window math needs -- reasoned
   through explicitly rather than forcing a `TopologyTestDriver` test to
   pretend it could cover this.
+- `KafkaStreamsLivenessHealthIndicatorTest` /
+  `AggregatorLivenessHealthGroupIntegrationTest` -- backlog #85(b)'s real
+  proof (a genuine, live-broker-induced `KafkaStreams.State.ERROR` crash,
+  plus a real Spring context boot confirming the `liveness` health group
+  actually contains the new indicator). See "Backlog #85(b), resolved"
+  below for the full writeup.
 
 ## Consumer lag / restoration metrics
 
@@ -321,3 +327,121 @@ untouched by this item and remains genuinely open.
 `records-lag-max` (bound via `KafkaStreamsMetrics`, `AggregatorStreamsConfig`)
 are both real Micrometer metrics on `/actuator/prometheus` -- backlog
 #81's AC.
+
+## Backlog #85(b), resolved: liveness now gates on a genuine Kafka Streams `ERROR`
+
+Backlog #85 found two real, independent incidents live during #81's first
+cluster sync (`services#52`, the RocksDB/Alpine `libstdc++`
+`UnsatisfiedLinkError`; `services#53`, `BoundedRocksDbConfigSetter`
+breaking Kafka Streams' own RocksDB metrics wiring) -- both fixed, both
+verified live. Both incidents shared one dangerous shape: the Kafka
+Streams client hit a fatal, unrecoverable error, its own uncaught-
+exception handler shut it down (`SHUTDOWN_CLIENT`, landing in the real,
+terminal `KafkaStreams.State.ERROR`), and the pod's own liveness/readiness
+probes (Spring Boot's default health groups, which know nothing about
+Kafka Streams' own internal state) kept reporting `Healthy`/`Running` the
+entire time. Nothing told Kubernetes to actually restart the pod -- only a
+human watching real logs after each live sync caught it, twice. Backlog
+#85's own AC required this gap to be "stated and either implemented or
+explicitly deferred with the real tradeoff recorded, not left as an
+implicit gap a second time." **This session implemented it.**
+
+**The decision: gate LIVENESS on `ERROR`, leave READINESS exactly as it
+is.** These are different questions with different right answers here:
+
+- **Readiness** ("should this pod receive traffic right now?") stays
+  exactly as `platform/kubernetes/aggregator/deployment.yaml`'s own
+  comment already reasoned: ungated on Kafka Streams' state. The real
+  ~45-second restore/consumer-group-rejoin window measured above ("ADR
+  0011, resolved") happens on *every* normal restart (no PVC mounted for
+  the state directory -- every restart forces a full changelog replay),
+  and `AggregateQueryService.isReady()` already gives a more honest,
+  finer-grained "still restoring" signal (a real `503`) than a readiness
+  probe that would otherwise flap the pod in and out of the Service's
+  endpoint list on every restart. Changing readiness here would have
+  reintroduced exactly the flapping that reasoning was written to avoid.
+  Nothing about readiness changed in this PR.
+- **Liveness** ("should Kubernetes kill and restart this container?") asks
+  a genuinely different question, and `ERROR` is exactly the case a
+  liveness probe exists to catch. Per the real
+  `org.apache.kafka.streams.KafkaStreams.State` enum (confirmed against
+  the actual `kafka-streams:4.2.1` dependency jar and its own real
+  Javadoc, not assumed from memory), `ERROR` is reached only via
+  `PENDING_ERROR -> ERROR` and is explicitly documented as "not
+  recoverable, and only a restart would get an application back to the
+  RUNNING state" -- precisely what both real #85 incidents hit. The
+  transient states a normal restore genuinely passes through on the way
+  back to `RUNNING` (`CREATED`, `REBALANCING`) do **not** flip liveness,
+  or this would have just moved the flapping problem from readiness to
+  liveness instead of avoiding it. `NOT_RUNNING` (a graceful
+  `PENDING_SHUTDOWN -> NOT_RUNNING`, i.e. this process's own `close()`
+  being called) is also left `UP`: this app never calls `close()` on its
+  own streams instance outside of shutdown, so by the time that state is
+  reached the container is already tearing itself down on purpose -- no
+  real pod is left for a liveness probe to usefully kill.
+
+**Implementation**: `KafkaStreamsLivenessHealthIndicator`
+(`observability/`) implements Spring Boot 4's current health SPI
+(`org.springframework.boot.health.contributor.HealthIndicator` --
+confirmed against the actual `spring-boot-health:4.1.0` jar; Boot 4 moved
+this out of the old `org.springframework.boot.actuate.health` package this
+project's own memory of Boot 3 would have assumed), reads the real
+`StreamsBuilderFactoryBean.getKafkaStreams().state()` (the same DI pattern
+`AggregateQueryService` already established for reaching the live
+`KafkaStreams` instance), and is registered under the explicit bean name
+`"kafkaStreams"`. `application.yml` wires it into the `liveness` group
+only, via `management.endpoint.health.group.liveness.include:
+[livenessState, kafkaStreams]` -- `livenessState` (Boot's own default) is
+listed explicitly, not dropped, because setting this property at all
+**replaces** the default group membership rather than adding to it
+(confirmed against the actual `AvailabilityProbesHealthEndpointGroups`
+source: it only auto-creates the `liveness`/`readiness` groups from
+`livenessState`/`readinessState` alone when the user has not already
+defined a group with that name). `readiness` is untouched -- no
+`management.endpoint.health.group.readiness.*` property was added.
+
+**No platform-side change was needed or made.** `/actuator/health/liveness`
+and `/actuator/health/readiness` are still the exact same paths Boot's
+health-groups feature serves either way -- only which indicators are
+included under `liveness` changed, entirely Boot-side. `platform`'s
+`deployment.yaml` probe block is untouched by this PR.
+
+**Real verification that this cannot reintroduce probe flapping.**
+`deployment.yaml`'s liveness probe allows `initialDelaySeconds(20) +
+periodSeconds(10) * failureThreshold(6) = 80s` of real, continuous
+non-`ERROR` state before failing the pod -- comfortably more than the
+real ~45s restore/rejoin window measured above, and `CREATED`/
+`REBALANCING` both report `UP` from this indicator for that entire
+window, so a normal restart does not trip it.
+
+**Tests, at two levels of strength, stated plainly:**
+
+- `KafkaStreamsLivenessHealthIndicatorTest` -- the strong, preferred
+  proof for the two states that matter most. A real embedded KRaft broker
+  (the same real process `StateStoreRecoveryTest` uses) plus a real
+  `KafkaStreams` instance for each: one runs the real production topology
+  to a real `RUNNING` state; the other runs a small, deliberately-
+  throwing topology with a real `streamsUncaughtExceptionHandler` set to
+  `SHUTDOWN_CLIENT` -- the exact real reaction both #85 incidents hit --
+  fed one real record to trigger it, and waits for a real, live-broker-
+  induced `PENDING_ERROR -> ERROR` transition. Nothing here is mocked; the
+  indicator's decision rule is exercised directly against each real
+  instance's own `.state()` afterward. The remaining states
+  (`CREATED`/`REBALANCING`/`PENDING_SHUTDOWN`/`NOT_RUNNING`/not-yet-started)
+  are exercised against the real `KafkaStreams.State` enum constants
+  directly rather than a live instance forced into each one -- reliably
+  forcing a running instance into a transient state like `REBALANCING`
+  without flakiness would need real multi-instance rebalance choreography,
+  out of proportion to what this indicator's own deliberately simple
+  classification needs proven, and `StateStoreRecoveryTest` already
+  independently establishes the real ~45s window a restart genuinely
+  spends in exactly these states. Stated plainly: this is the real,
+  minimum-strength case among the states covered, the rest are the
+  stronger, live-broker-verified case.
+- `AggregatorLivenessHealthGroupIntegrationTest` -- boots the real
+  `AggregatorApplication` Spring context against a real embedded broker
+  and makes a real HTTP call to `/actuator/health/liveness` (the exact
+  path the real probe hits), then inspects the real response body:
+  confirms `kafkaStreams` and `livenessState` are both present, and
+  `readinessState` is absent -- real proof the `application.yml` property
+  actually took effect end-to-end, not just that it compiled.
