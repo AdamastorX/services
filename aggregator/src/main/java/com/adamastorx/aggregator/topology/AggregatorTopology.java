@@ -12,6 +12,7 @@ import org.apache.kafka.streams.kstream.Grouped;
 import org.apache.kafka.streams.kstream.KStream;
 import org.apache.kafka.streams.kstream.Materialized;
 import org.apache.kafka.streams.kstream.TimeWindows;
+import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.WindowStore;
 import org.springframework.kafka.support.serializer.JsonSerde;
 
@@ -59,6 +60,39 @@ import org.springframework.kafka.support.serializer.JsonSerde;
  * mechanism, not something this class implements itself) -- see {@code
  * AggregatorProperties#window()}'s javadoc and this module's README for
  * the real measured restoration time this bound was chosen against.
+ *
+ * <p><b>A second, parallel, non-windowed "latest known state" per
+ * ticker.</b> Found live 2026-08-05: real trade ticks only flow during US
+ * market hours and real news is naturally sparse, so most of the time
+ * (including whenever a human opens {@code visualizer}) the *current*
+ * 15-minute window has no data for a ticker at all, even though a real
+ * price/sentiment was seen recently. {@link KStream#toTable()} on each
+ * already-ticker-keyed source stream materializes a plain {@code
+ * KTable<String, StockPriceTick>} / {@code KTable<String,
+ * SentimentScoredEvent>} -- ordinary KTable semantics (latest record per
+ * key wins), not a windowed aggregate, so {@code
+ * api.AggregateQueryService} can fall back to "the most recent known
+ * value, whatever its age" instead of returning nothing. No explicit
+ * {@code groupByKey()} before {@code toTable()}: both source streams are
+ * already correctly partitioned by ticker straight from {@code
+ * builder.stream(topic)} (same key the topic itself is produced on), so
+ * the DSL does not insert a repartition step -- confirmed by this
+ * topology's own {@code Topology#describe()} output having no repartition
+ * node for either new sub-topology.
+ *
+ * <p><b>This does not reopen ADR 0011's resolution above -- it is a
+ * separately-bounded, trivially small addition.</b> A KTable's changelog
+ * is bounded by key-space, not by time: at most one record per key is
+ * ever retained (each new value for a ticker overwrites, does not append
+ * to, the changelog's compacted view), and this topology's key-space is
+ * exactly the 5-ticker watchlist. A full rebuild of either latest-known
+ * store after a broker/topic loss replays at most 5 changelog records --
+ * smaller than even the windowed stores' own already-small measured
+ * replay volume (see README's "ADR 0011, resolved"). Stated explicitly
+ * here, not merely assumed: this reasoning does not depend on real
+ * traffic volume or frequency the way the windowed stores' bound does
+ * (window size), so it holds even as {@code market-data-ingestor}'s
+ * REST-poll fallback and real news frequency both stay low.
  */
 public final class AggregatorTopology {
 
@@ -91,6 +125,20 @@ public final class AggregatorTopology {
                                         props.priceWindowStoreName())
                                 .withKeySerde(keySerde)
                                 .withValueSerde(priceAggSerde));
+        // The "latest known price" fallback -- see this class's own javadoc
+        // ("A second, parallel, non-windowed 'latest known state'").
+        // KStream.toTable() keeps ordinary KTable semantics (the latest
+        // record per key wins), materialized with Kafka Streams' own
+        // default TimestampedKeyValueStore -- api.AggregateQueryService
+        // reads that store via QueryableStoreTypes.timestampedKeyValueStore()
+        // specifically so it gets each ticker's real last-update time
+        // (ValueAndTimestamp#timestamp(), Kafka's own record timestamp,
+        // same source this whole topology already trusts -- see "Windowing
+        // on Kafka's own record timestamp" above) for the honest
+        // priceAsOf field, not a fabricated one.
+        ticks.toTable(Materialized.<String, StockPriceTick, KeyValueStore<Bytes, byte[]>>as(props.latestPriceStoreName())
+                .withKeySerde(keySerde)
+                .withValueSerde(tickSerde));
 
         KStream<String, SentimentScoredEvent> sentiments =
                 builder.stream(props.newsSentimentScoredTopic(), Consumed.with(keySerde, sentimentSerde));
@@ -104,6 +152,14 @@ public final class AggregatorTopology {
                                         props.sentimentWindowStoreName())
                                 .withKeySerde(keySerde)
                                 .withValueSerde(sentimentAggSerde));
+        // Same "latest known" fallback, independent of the price one above
+        // -- a ticker's price and sentiment can each be fresh or stale on
+        // their own (real news arrives on its own schedule, unrelated to
+        // when the last trade tick landed).
+        sentiments.toTable(Materialized.<String, SentimentScoredEvent, KeyValueStore<Bytes, byte[]>>as(
+                        props.latestSentimentStoreName())
+                .withKeySerde(keySerde)
+                .withValueSerde(sentimentSerde));
 
         return ticks;
     }

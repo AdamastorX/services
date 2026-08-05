@@ -82,6 +82,11 @@ app:
     grace: PT0S
     price-window-store-name: price-window-store
     sentiment-window-store-name: sentiment-window-store
+    # The non-windowed "latest known state" KTables (README's "Latest
+    # known state" section) -- bounded by ticker count (5), not time, so
+    # they don't reopen ADR 0011's windowed-store resolution above.
+    latest-price-store-name: latest-price-store
+    latest-sentiment-store-name: latest-sentiment-store
     # Same 5 large-cap tickers market-data-ingestor/news-ingestor already
     # use (see AggregatorProperties' own javadoc for why this is
     # duplicated, not shared, config).

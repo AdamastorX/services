@@ -25,6 +25,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *     still accepted into it. Zero -- see {@code AggregatorTopology}'s
  *     javadoc for why a real-time price/sentiment feed has no accepted
  *     late-arrival case worth extending changelog retention for.
+ * @param latestPriceStoreName the non-windowed {@code KTable<String,
+ *     StockPriceTick>} store name -- the "latest known price per ticker,
+ *     however old" fallback {@code AggregateQueryService} reads when the
+ *     current window has none. See {@code AggregatorTopology}'s javadoc
+ *     and this module's README for why this store's changelog is bounded
+ *     by ticker count, not time, and does not reopen ADR 0011's resolution
+ *     for the windowed stores above.
+ * @param latestSentimentStoreName the same "latest known, however old"
+ *     store for {@code news.sentiment.scored}, independent of {@code
+ *     latestPriceStoreName} -- a ticker's price and sentiment can each be
+ *     fresh or stale independently of the other.
  * @param watchlist the fixed ticker list {@code GET /aggregates} (all
  *     tickers) iterates -- same 5 large-cap tickers {@code
  *     market-data-ingestor}/{@code news-ingestor} already use (not an
@@ -43,4 +54,6 @@ public record AggregatorProperties(
         Duration grace,
         String priceWindowStoreName,
         String sentimentWindowStoreName,
+        String latestPriceStoreName,
+        String latestSentimentStoreName,
         List<String> watchlist) {}
