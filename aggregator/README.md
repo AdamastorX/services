@@ -4,7 +4,10 @@ Backlog #81 (M13, ADR 0029) -- supersedes/revives #55. A Kafka Streams
 topology consuming `stock.price.tick` (#78) and `news.sentiment.scored`
 (#80), computing a real windowed rolling-average-sentiment and
 price-movement aggregate per ticker, served over a small REST query API
-for #82 (`visualizer`).
+for #82 (`visualizer`). Also computes each ticker's *latest known* price/
+sentiment, independent of any window -- see "Latest known state" below;
+found live 2026-08-05 to be necessary, not optional, for #82's own real
+usability.
 
 ## Shape
 
@@ -26,11 +29,17 @@ for #82 (`visualizer`).
   watchlisted tickers) -- a small, plain query API (ADR 0021's
   anti-gold-plating discipline), matching `api`'s own simplest lookup
   endpoints (`VariantLookupController`). `503` while the state store is
-  still restoring after a restart; `404` for a ticker with no data yet
-  in the current window (a real, common state -- price ticks are
-  continuous, but news/sentiment is sparse).
+  still restoring after a restart; `404` only for a ticker that has
+  genuinely never had a price tick since this process started (see
+  "Latest known state" below for why this is no longer "no data in the
+  current window" -- that used to be the common case, not the rare one).
 - **Window**: 15 minutes, tumbling, zero grace. See "ADR 0011, resolved"
   below for why.
+- **Latest known state**: two non-windowed `KTable`s (`latest-price-store`,
+  `latest-sentiment-store`), one per input topic, alongside the windowed
+  stores above -- `AggregateQueryService` prefers the current window's
+  data when it has any, and falls back to these per field (price,
+  sentiment independently) otherwise. See "Latest known state" below.
 
 ## Wire shapes consumed (verified live, not assumed)
 
@@ -135,6 +144,98 @@ network blip falsely evicting a live member) -- a real, deploy-time
 decision left to a human, consistent with this module's whole "state the
 real number, don't quietly pick one that looks better" discipline.
 
+## Latest known state (found live 2026-08-05)
+
+**The real problem.** `AggregateQueryService.currentWindow` (its v1 name)
+only ever looked at the current 15-minute tumbling window -- if no
+`stock.price.tick`/`news.sentiment.scored` event had landed in that exact
+window, `GET /aggregates` returned `[]`. Real trade ticks only flow during
+actual US market hours and real news is naturally sparse, so most of the
+time -- including whenever a human actually opens `visualizer` to look --
+the page showed nothing, even though a real price/sentiment had been seen
+recently. Found live by the project owner, in their own words: "quero que
+sempre que abra o visualizer os dados estejam atualizados" (I want the
+data to always be up to date whenever the visualizer is opened). A
+companion change adds a low-frequency REST-poll fallback to
+`market-data-ingestor` (every 30 minutes) so a real price is always
+available at least that often even outside market hours; real news stays
+as infrequent as real news actually is. Given both inputs can now be tens
+of minutes old at any given moment, "current window only" was the wrong
+model -- what was needed is "the most recent known value per ticker, with
+its real age shown honestly," not a fabricated always-fresh number.
+
+**The change: a second, parallel, non-windowed `KTable` per input,
+alongside the existing windowed stores -- additive, not a replacement.**
+The existing windowed stores (`price-window-store`,
+`sentiment-window-store`) are unchanged and still real and useful: they
+remain the more precise signal for "movement/rolling sentiment within an
+active window" during real market hours, and `AggregateQueryService`
+still prefers them when they have data. `AggregatorTopology` now also
+calls `KStream.toTable()` on each already-ticker-keyed source stream,
+producing `latest-price-store` (`KTable<String, StockPriceTick>`) and
+`latest-sentiment-store` (`KTable<String, SentimentScoredEvent>`) --
+ordinary KTable semantics (the latest record per key wins), not a
+windowed aggregate. `AggregateQueryService` resolves price and sentiment
+*independently*: current window if it has data, else the latest-known
+`KTable`'s single most recent value, synthesized into a one-sample
+aggregate via `PriceWindowAggregate`/`SentimentWindowAggregate`'s own
+`accumulate` (the exact same fold the windowed aggregation itself uses,
+not a bespoke shape) -- so a fallback response is honestly "one known
+data point," not a fabricated multi-tick movement.
+
+**Honest staleness, not fabricated freshness -- `priceAsOf`/
+`sentimentAsOf`.** `TickerAggregateResponse` gained two new `Instant`
+fields, one per resolved field, independent of each other (a ticker's
+price and sentiment can each be fresh or stale on their own -- real trade
+ticks and real news arrive on unrelated schedules). Both come from
+`ValueAndTimestamp#timestamp()` -- Kafka Streams' own default
+`Timestamped*Store` wrapping (`QueryableStoreTypes.timestampedWindowStore()`
+/ `.timestampedKeyValueStore()`, a Kafka Streams built-in since KIP-258,
+not something this service implements), i.e. the real Kafka record
+timestamp of whichever tick/score most recently updated that key/window --
+the same trusted timestamp source this whole topology already uses for
+windowing (see "Windowing on Kafka's own record timestamp" above). Never
+"now" just because a value is present. `windowStart`/`windowEnd` on the
+response are unchanged in shape (still the current window's own
+boundaries, kept for `visualizer`'s existing display) but no longer
+reliably describe when the shown data was actually observed -- that is
+now `priceAsOf`/`sentimentAsOf`'s job specifically. All existing JSON
+field names are preserved; only new fields were added, so this is a
+backward-compatible extension for any consumer reading by field name.
+
+**"No data at all" still means something real -- unchanged, just
+rarer.** If `latest-price-store` itself has no entry for a ticker, that
+ticker has genuinely never had a price tick land since this process
+started -- `AggregateQueryService.latestKnownState` still returns empty
+for exactly that case (an unwatched/misconfigured ticker, or the first
+few minutes after a fresh deploy/restart before the first real tick or
+the first 30-minute REST-poll fallback lands). This is the same "no data
+yet" case v1 already had; what changed is how rarely it now actually
+happens, not its meaning. Sentiment has no equivalent gating role: a
+ticker with a real, known price but zero sentiment ever (real, common --
+news is sparse) still returns a real response with
+`sentimentSampleCount`/`avgSentiment`/`sentimentAsOf` all `null`,
+unchanged from v1.
+
+**This does not reopen ADR 0011's resolution above -- confirmed, not
+merely assumed.** A `KTable`'s changelog is bounded by key-space, not by
+time: at most one record per key is ever retained (each new value for a
+ticker overwrites, not appends to, the changelog's compacted view), and
+this topology's key-space is exactly the 5-ticker watchlist. A full
+rebuild of either latest-known store after a broker/topic loss replays at
+most 5 changelog records -- smaller than even the windowed stores'
+already-small measured replay volume above (5 + 5, one per ticker per
+store). This reasoning does not depend on real traffic volume or
+frequency the way the windowed stores' bound does (window size): it holds
+regardless of how infrequent `market-data-ingestor`'s REST-poll fallback
+or real news end up being, unlike the windowed stores, whose bound
+specifically depends on window size staying small relative to real
+traffic. `StateStoreRecoveryTest`'s own measurement (unchanged) was not
+re-run for this addition -- not because it was skipped, but because nothing
+about its own windowed-store measurement changed; see that test's own
+updated javadoc for why re-running it was not needed to validate this
+separately-bounded addition.
+
 ## Resource sizing (RocksDB / state store memory)
 
 `topology/BoundedRocksDbConfigSetter` bounds each RocksDB instance's
@@ -142,13 +243,19 @@ memory explicitly, rather than leaving Kafka Streams' out-of-the-box
 RocksDB defaults in place (which reserve on the order of 100+MB *per
 store instance*, before a single byte of this milestone's actual tiny
 data volume is written -- a well-documented "Kafka Streams RocksDB
-memory surprises people" failure mode). This topology opens two
-persistent windowed stores; under the bounded config, total RocksDB
-memory should stay in the tens of MB, not several hundred. See that
-class's own javadoc for the exact numbers and reasoning. **This is a
-deliberate ceiling this config enforces, not a measured number** -- real
-container RSS has not been sampled against a live deployment (out of
-scope here, no live sync attempted, see the PR description).
+memory surprises people" failure mode). This topology opens four
+persistent stores (the two windowed stores, plus the two latest-known
+`KTable`s added for "Latest known state" above -- `.toTable()` also
+materializes to persistent RocksDB by default, not memory, so this is a
+real addition to the RocksDB instance count, not a free one); under the
+bounded config, total RocksDB memory should stay in the tens of MB, not
+several hundred -- the two new stores' own real data volume is trivially
+small regardless (5 keys each, see "Latest known state" above), so this
+doesn't change the real ceiling materially. See that class's own javadoc
+for the exact numbers and reasoning. **This is a deliberate ceiling this
+config enforces, not a measured number** -- real container RSS has not
+been sampled against a live deployment (out of scope here, no live sync
+attempted, see the PR description).
 
 ## #23a is not a real blocker for this measurement
 
@@ -177,8 +284,35 @@ untouched by this item and remains genuinely open.
   instance too, not just the test driver, since it directly gated a real
   bug in `AggregateQueryService`'s first draft (see that class's own
   javadoc).
+  Also proves the "latest known state" plumbing (found live 2026-08-05):
+  an old tick still lands in `latest-price-store` with its real timestamp
+  attached (not silently dropped just because it's outside the current
+  window), a genuinely current-window tick is still preferred over the
+  fallback (no regression), and price/sentiment staleness for one ticker
+  really are tracked independently at the store level.
 - `StateStoreRecoveryTest` -- the real state-store-recovery measurement
-  described above, against a real embedded KRaft broker.
+  described above, against a real embedded KRaft broker. Its own javadoc
+  now also states why it was not re-run for the "latest known state"
+  addition (a separately-bounded change, see above).
+- `AggregateQueryServiceTest` -- a real `@SpringBootTest` +
+  `@EmbeddedKafka` integration test (this project's own established
+  pattern for exactly this shape of test, e.g. `market-data-ingestor`'s
+  `StockPriceTickPublisherIntegrationTest`), proving
+  `AggregateQueryService`'s real "prefer current window, else fall back
+  to latest known" logic end to end: an hour-old tick surfaces via the
+  fallback with an honest `priceAsOf` (not "now"); a genuinely
+  current-window tick is still preferred and computed correctly; a
+  ticker's price and sentiment can be independently fresh vs.
+  stale-but-known at the same real moment; a never-seen ticker still
+  returns the real empty case. Added because `TopologyTestDriver` cannot
+  exercise this: `AggregateQueryService` reads via
+  `StreamsBuilderFactoryBean`/`KafkaStreams.store(...)`, which
+  `TopologyTestDriver` does not provide, and `TopologyTestDriver` has no
+  notion of "wall-clock 'now' has moved on since this record was piped
+  in, but it's still queryable" the way this class's own
+  `System.currentTimeMillis()`-anchored window math needs -- reasoned
+  through explicitly rather than forcing a `TopologyTestDriver` test to
+  pretend it could cover this.
 - `KafkaStreamsLivenessHealthIndicatorTest` /
   `AggregatorLivenessHealthGroupIntegrationTest` -- backlog #85(b)'s real
   proof (a genuine, live-broker-induced `KafkaStreams.State.ERROR` crash,

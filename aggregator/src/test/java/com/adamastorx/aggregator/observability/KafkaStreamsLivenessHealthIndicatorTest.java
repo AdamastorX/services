@@ -119,6 +119,8 @@ class KafkaStreamsLivenessHealthIndicatorTest {
                 Duration.ZERO,
                 "price-window-store",
                 "sentiment-window-store",
+                "latest-price-store",
+                "latest-sentiment-store",
                 List.of("AAPL"));
 
         StreamsBuilder builder = new StreamsBuilder();

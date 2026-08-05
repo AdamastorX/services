@@ -26,11 +26,17 @@ public class AggregateController {
     }
 
     /**
-     * The current window's price/sentiment correlation for one ticker.
-     * {@code 503} while the app is still restoring state after a restart
-     * (backlog #81's own AC scenario -- a real, honest signal, not a
-     * generic error) rather than a misleading {@code 404} that looks
-     * identical to "no data for this ticker."
+     * The best-known price/sentiment correlation for one ticker -- the
+     * current window's data if it has any, otherwise the most recently
+     * known value regardless of age (see {@code AggregateQueryService}'s
+     * own javadoc; {@code priceAsOf}/{@code sentimentAsOf} on the
+     * response say how stale it really is). {@code 503} while the app is
+     * still restoring state after a restart (backlog #81's own AC
+     * scenario -- a real, honest signal, not a generic error) rather than
+     * a misleading {@code 404} that looks identical to "no data for this
+     * ticker." {@code 404} now means this ticker has genuinely never had
+     * a price tick since this process started, not merely "nothing in
+     * the current window" -- a materially rarer real state than before.
      */
     @GetMapping("/aggregates/{ticker}")
     public ResponseEntity<TickerAggregateResponse> get(@PathVariable String ticker) {
@@ -39,18 +45,18 @@ public class AggregateController {
                     HttpStatus.SERVICE_UNAVAILABLE, "State store still restoring from the Kafka changelog");
         }
         return queryService
-                .currentWindow(ticker.toUpperCase(Locale.ROOT))
+                .latestKnownState(ticker.toUpperCase(Locale.ROOT))
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    /** The current window's aggregate for every watchlisted ticker (backlog #81's AC), batched. */
+    /** The best-known aggregate for every watchlisted ticker (backlog #81's AC), batched -- see {@link #get} above. */
     @GetMapping("/aggregates")
     public ResponseEntity<List<TickerAggregateResponse>> getAll() {
         if (!queryService.isReady()) {
             throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE, "State store still restoring from the Kafka changelog");
         }
-        return ResponseEntity.ok(queryService.currentWindowForWatchlist());
+        return ResponseEntity.ok(queryService.latestKnownStateForWatchlist());
     }
 }
