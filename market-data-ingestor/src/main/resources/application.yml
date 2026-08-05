@@ -81,3 +81,20 @@ app:
     # connects on ApplicationReadyEvent). Test properties set it false --
     # see that class's own javadoc on why.
     auto-connect: true
+  # The REST-poll fallback (FinnhubQuotePoller) -- a second, independent
+  # scheduled task alongside the websocket above, not a replacement for
+  # it. See that class's own javadoc for the real problem this solves
+  # (aggregator's windows going empty outside market hours), the 30-
+  # minute interval, and the real rate-limit math.
+  finnhub-quote-poll:
+    quote-uri: https://finnhub.io/api/v1/quote
+    # 30 minutes -- the real number the project owner explicitly
+    # confirmed as this repo's "reasonable middle ground" (FinnhubQuotePoller's
+    # own javadoc has the full rate-limit math: 5 calls/cycle, 10 calls/hour
+    # on average, trivially inside Finnhub's free-tier 60 calls/minute cap).
+    interval-ms: 1800000
+    # Offset from app startup so this fallback's first real poll doesn't
+    # fire in the same instant as the websocket's own first connect
+    # attempt -- a minor politeness, not a correctness requirement (the
+    # rate-limit math above already holds even without it).
+    initial-delay-ms: 60000
