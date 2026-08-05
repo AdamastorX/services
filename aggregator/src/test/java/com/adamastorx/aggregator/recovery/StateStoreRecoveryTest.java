@@ -80,6 +80,17 @@ import org.springframework.kafka.test.EmbeddedKafkaKraftBroker;
  * record-replay volume; both numbers are still reported honestly, with
  * that caveat stated plainly rather than implying a stronger trend than
  * this small a sample actually shows.
+ *
+ * <p><b>The topology's "latest known state" {@code KTable}s (added
+ * after this measurement was taken) are deliberately not separately
+ * measured here.</b> This test only asserts against the two windowed
+ * stores ({@code allTickersIngested} below) -- the two non-windowed
+ * latest-known stores are a separately-bounded addition (bounded by
+ * ticker count, not window size or event volume; see {@code
+ * AggregatorTopology}'s own javadoc and this module's README) that does
+ * not change the reasoning this measurement records for the windowed
+ * stores above, so re-running this exact measurement was not needed to
+ * validate that addition.
  */
 class StateStoreRecoveryTest {
 
@@ -146,6 +157,8 @@ class StateStoreRecoveryTest {
                 Duration.ZERO,
                 "price-window-store",
                 "sentiment-window-store",
+                "latest-price-store",
+                "latest-sentiment-store",
                 tickers);
 
         String applicationId = "aggregator-recovery-test-" + UUID.randomUUID();

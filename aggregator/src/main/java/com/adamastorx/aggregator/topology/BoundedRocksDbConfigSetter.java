@@ -20,16 +20,23 @@ import org.rocksdb.RocksDB;
  * rocksdb.config.setter}, each RocksDB instance uses librocksdb's own
  * native defaults: a 64MB {@code write_buffer_size} times {@code
  * max_write_buffer_number=2} (up to ~128MB of memtables) plus its own
- * unshared block cache, per store. This topology opens two persistent
- * windowed stores ({@code price-window-store}, {@code
- * sentiment-window-store}); left at RocksDB's own defaults that is
- * several hundred MB of *reserved* memory before a single byte of this
- * milestone's actual data (a handful of ticks/scores per ticker per
- * 15-minute window, 5-8 tickers) is written -- a well-documented "Kafka
- * Streams RocksDB memory surprises people" failure mode, not a
- * hypothetical one, and a bad fit for a node with well under 1 free CPU
- * core and no measured memory slack yet (see this service's own
- * platform deployment.yaml for the real current node headroom numbers).
+ * unshared block cache, per store. This topology opens four persistent
+ * stores ({@code price-window-store}, {@code sentiment-window-store}, and
+ * -- added for the "latest known state" fallback, see this service's
+ * README -- {@code latest-price-store}, {@code latest-sentiment-store});
+ * left at RocksDB's own defaults that is several hundred MB of *reserved*
+ * memory before a single byte of this milestone's actual data (a handful
+ * of ticks/scores per ticker per 15-minute window, 5-8 tickers; the two
+ * latest-known stores hold at most one record per ticker each, trivially
+ * smaller still) is written -- a well-documented "Kafka Streams RocksDB
+ * memory surprises people" failure mode, not a hypothetical one, and a
+ * bad fit for a node with well under 1 free CPU core and no measured
+ * memory slack yet (see this service's own platform deployment.yaml for
+ * the real current node headroom numbers). This config setter applies to
+ * every RocksDB-backed store the app opens (a single {@code
+ * rocksdb.config.setter} in {@code application.yml}, not a per-store
+ * hook) -- the two newer stores are bounded by the exact same config
+ * below with no separate wiring needed.
  *
  * <p><b>What this sets instead.</b> A single 8MB block cache shared
  * across every store instance (RocksDB's own historical out-of-box
@@ -40,8 +47,8 @@ import org.rocksdb.RocksDB;
  * RocksDB's own tuning guide, not an arbitrary number) -- real, small,
  * explicit ceilings for a workload this milestone's own traffic
  * (5-8 tickers, single-digit events per ticker per window) will not come
- * close to saturating. Two stores under this config: roughly 8MB (shared
- * cache) + 2 x 8MB (per-store memtable ceiling) = ~24MB worst case, not
+ * close to saturating. Four stores under this config: roughly 8MB (shared
+ * cache) + 4 x 8MB (per-store memtable ceiling) = ~40MB worst case, not
  * the several-hundred-MB unbounded ceiling RocksDB's own defaults leave
  * open. This is a bound, not a measurement -- real RSS has not been
  * sampled against a live deployment (out of scope here, see this
