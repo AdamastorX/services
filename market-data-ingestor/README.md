@@ -70,6 +70,89 @@ this project's no-gold-plating discipline (ADR 0021) doesn't justify for a
 personal portfolio project's alerting -- an honestly-stated v1 gap, not a
 silent one.
 
+## REST-poll fallback (market-closed supplement, not a replacement)
+
+`aggregator` (backlog #81) windows `stock.price.tick` into 15-minute
+tumbling aggregates with no history -- if no tick lands in the current
+window, the ticker shows no data at all. During real US market hours
+that's fine (the websocket pushes ticks constantly). Outside market hours
+-- most of the day, every evening, every weekend -- Finnhub's websocket is
+connected but silent (correct, expected behavior, not a bug: see "Market-
+hours logic" above), so `stock.price.tick` gets nothing at all, and
+`aggregator`'s output (and therefore `visualizer`) sits empty most of the
+time.
+
+`finnhub/FinnhubQuotePoller` is the project owner's own explicitly-
+confirmed "reasonable middle ground": a second, independent `@Scheduled`
+task, alongside `FinnhubWebSocketClient`, not a replacement for it. Keeps
+the real-time websocket as the primary, free, push-based source during
+actual market hours (untouched by this poller), and supplements it with a
+deliberately low-frequency REST poll of Finnhub's real `GET
+/api/v1/quote?symbol={ticker}&token={key}` endpoint -- the same real
+endpoint shape and the same real `FINNHUB_API_KEY` the websocket path
+already authenticates with -- so there is always a reasonably fresh real
+price available even when the market is closed.
+
+- **Interval: 30 minutes** -- the real number the project owner explicitly
+  confirmed. Runs unconditionally, 24/7, not gated on market hours:
+  simpler than adding conditional logic, and harmless redundancy with the
+  websocket during market hours (see the rate-limit math below for why
+  running around the clock is still trivially cheap).
+- **Wire contract: unchanged.** One `StockPriceTick` per ticker per poll,
+  published through the exact same `StockPriceTickPublisher` onto the
+  exact same `stock.price.tick` topic the websocket path uses -- no
+  second topic, no second contract. `volume` has no real per-quote
+  equivalent from this REST endpoint (unlike a real trade tick): this
+  poller publishes `BigDecimal.ZERO`, not `null` -- `StockPriceTick`'s
+  `volume` field is a non-null `BigDecimal` everywhere else in this
+  codebase (every real trade tick carries a real trade size), and `null`
+  would make this the first nullable value this wire contract has ever
+  carried, a latent NPE risk for any future consumer. `ZERO` is not
+  literally accurate (no zero-volume trade actually happened) -- a
+  deliberate, honestly-stated v1 modeling gap; `aggregator` doesn't
+  currently do any arithmetic over `volume` at all, so this has no real
+  effect on `aggregator`'s own output today (see `FinnhubQuotePoller`'s
+  own javadoc for the full reasoning).
+- **Rate-limit math (Finnhub free tier: 60 API calls/minute):** one poll
+  cycle makes exactly one REST call per watchlisted ticker -- 5 calls per
+  cycle, every 30 minutes, i.e. 10 calls/hour on average. Even in the
+  worst case (all 5 landing in the same wall-clock second) that's 5 calls
+  against a 60-calls/minute budget, under 10% of one minute's allowance --
+  trivially, and deliberately, nowhere near hammering the API.
+- **Per-ticker failure handling:** each ticker's fetch runs inside its own
+  try/catch in `pollAllTickers()`, the same "one failure doesn't take down
+  the whole cycle" discipline `news-ingestor`'s own `FeedPoller` already
+  established in this repo -- a real HTTP error (including a real 429
+  rate-limit response), a connect/read timeout, or an unusable response
+  (Finnhub's own `c:0` "no quote for this symbol" shape) is logged and
+  skipped for that ticker only; the scheduler thread and the other four
+  tickers in the same cycle are unaffected.
+- **Deliberately does NOT feed `StaleFeedMetrics`:** that gauge alerts on
+  the websocket going silent *during real market hours* -- a real
+  incident. If this poller's ticks counted as "the feed is alive," a
+  genuinely dead websocket during market hours could be masked for up to
+  30 minutes by this fallback, defeating the alert's purpose.
+  `StaleFeedMetrics` stays wired to the websocket path only.
+
+### REST-poll fallback metrics
+
+- `market_data_quote_poll_succeeded_total` -- real Finnhub `/quote` calls
+  that returned a usable price for one watchlisted ticker.
+- `market_data_quote_poll_failed_total` -- real Finnhub `/quote` calls
+  that failed, or returned no usable price, for one watchlisted ticker.
+- `market_data_quote_ticks_published_total` -- ticks published to
+  `stock.price.tick` via this REST-poll path specifically (a subset of
+  `market_data_ticks_published_total`, which also counts the websocket
+  path).
+
+### REST-poll fallback config
+
+`app.finnhub-quote-poll.quote-uri` (default
+`https://finnhub.io/api/v1/quote`), `app.finnhub-quote-poll.interval-ms`
+(default `1800000`, 30 minutes), `app.finnhub-quote-poll.initial-delay-ms`
+(default `60000`) -- `application.yml`. The real Finnhub API key is reused
+from `app.finnhub.token` (`FINNHUB_API_KEY`), not duplicated.
+
 ## Stale-feed metric
 
 `observability/StaleFeedMetrics` exposes, per watchlisted ticker:
@@ -118,6 +201,17 @@ dev cluster, ADR 0011), keyed by ticker.
 - `tick/StockPriceTickPublisherIntegrationTest`: a tick handed to the
   publisher really lands on `stock.price.tick` (embedded broker) with the
   exact AC'd shape, keyed by ticker, inside the 2s bound.
+- `finnhub/FinnhubQuoteParsingTest`: Finnhub's real documented REST
+  `/quote` response shape (including the `c:0` "no quote for this symbol"
+  shape) parses correctly.
+- `finnhub/FinnhubQuotePollerIntegrationTest`: the REST-poll fallback
+  proven end to end against a real local HTTP server (`com.sun.net.httpserver.HttpServer`,
+  the same pattern `news-ingestor`'s own `FeedPollerIntegrationTest` uses)
+  and a real (embedded) Kafka broker -- a real quote response produces a
+  real published `StockPriceTick` on `stock.price.tick` for every
+  reachable ticker, and a real HTTP 500 for exactly one ticker (simulating
+  a Finnhub rate-limit/error response) is logged and skipped without
+  stopping the other four tickers in the same poll cycle.
 - The full Finnhub-to-Kafka path and the reconnect behavior are verified
   live against the real cluster, not in CI -- `app.finnhub.auto-connect`
   defaults `false` in every test's properties specifically so CI never
