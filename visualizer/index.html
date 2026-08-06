@@ -22,16 +22,19 @@
 
   <main>
     <p class="hint">
-      Real data, no mocks — every card below is whatever <code>aggregator</code>'s
-      current 15-minute tumbling window actually holds right now, read from its
-      live <code>GET /aggregates</code>. The price/sentiment lines are built by this
-      page from its own poll history (nothing is stored server-side beyond the
-      current window — see <code>aggregator</code>'s own
-      <code>TickerAggregateResponse</code> javadoc) — they show this browser tab's
-      own session, and reset on reload. It is real and common for a ticker to show
-      no price yet this window (news/ticks are sparse outside active trading hours)
-      or no sentiment yet this window (news is sparser still than ticks) — both are
-      rendered honestly below, not as zero or an error.
+      Real data, no mocks — every card below is <code>aggregator</code>'s
+      best-known price/sentiment for that ticker, read from its live
+      <code>GET /aggregates</code>: the current 15-minute window's data when
+      it has any, otherwise the most recently known value regardless of age
+      (see <code>aggregator</code>'s own <code>TickerAggregateResponse</code>
+      javadoc, "latest known state"). The <em>as of</em> times below each
+      figure are that honest freshness signal — a live green figure means it
+      landed in the current window; an amber one is real data, just older
+      than that. The trend lines are built by this page from its own poll
+      history (aggregator keeps no history server-side) — they show this
+      browser tab's own session, and reset on reload. A ticker with no price
+      at all yet (never seen since the last restart) is rendered as an
+      honest "no data" card, not as zero or an error.
     </p>
 
     <section class="banner" id="restoring-banner" hidden>

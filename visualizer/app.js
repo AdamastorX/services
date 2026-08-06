@@ -96,6 +96,37 @@ function fmtTime(d) {
   return d.toLocaleTimeString("en-US", { hour12: false });
 }
 
+// backlog #87 follow-up: aggregator's "latest known state" redesign
+// (services#56) added priceAsOf/sentimentAsOf specifically so a consumer
+// can tell real current-window data from an honest, possibly-old fallback
+// value -- this page's own README/hint text used to describe the pre-#56
+// world where an empty window meant an empty card, which #56 made the
+// common case. Rendered as relative age text, never a raw ISO timestamp
+// (nobody reads "2026-08-05T22:17:43.724Z" at a glance).
+function fmtAge(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return "just now"; // clock skew between this browser and the pod
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return "just now";
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m ago`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes}m ago`;
+}
+
+// "Fresh" means this value actually landed in the *current* window --
+// the same real distinction AggregateQueryService.resolvePrice/
+// resolveSentiment make server-side (prefer current window, else fall
+// back to latest-known). windowStart is the current window's own start
+// regardless of where the data came from (TickerAggregateResponse's own
+// javadoc), so comparing asOf against it is the honest, backend-derived
+// freshness check -- not a heuristic duration guess on this page's part.
+function isFresh(asOfIso, windowStartIso) {
+  return new Date(asOfIso).getTime() >= new Date(windowStartIso).getTime();
+}
+
 function sentimentBucket(score) {
   // VADER's own documented compound-score thresholds (ADR 0029 decision
   // 3: sentiment-analyzer uses VADER) -- +-0.05 is VADER's own
@@ -116,7 +147,10 @@ function buildCard(ticker) {
     <div class="ticker-body" data-el="body" hidden>
       <div class="price-row">
         <span class="price" data-el="price">—</span>
-        <span class="price-window" data-el="window">—</span>
+        <div class="price-meta">
+          <span class="price-window" data-el="window">—</span>
+          <span class="asof-badge" data-el="priceAsOf">—</span>
+        </div>
       </div>
       <canvas class="price-chart" data-el="chart" height="90"></canvas>
       <dl class="ticker-facts">
@@ -184,6 +218,7 @@ function buildCard(ticker) {
       body: card.querySelector('[data-el="body"]'),
       price: card.querySelector('[data-el="price"]'),
       window: card.querySelector('[data-el="window"]'),
+      priceAsOf: card.querySelector('[data-el="priceAsOf"]'),
       tickCount: card.querySelector('[data-el="tickCount"]'),
       firstLast: card.querySelector('[data-el="firstLast"]'),
       sentimentBadge: card.querySelector('[data-el="sentimentBadge"]'),
@@ -217,22 +252,34 @@ function renderTicker(ticker, data) {
   t.els.tickCount.textContent = data.tickCount != null ? data.tickCount.toLocaleString("en-US") : "—";
   t.els.firstLast.textContent = `${fmtMoney(data.firstPrice)} → ${fmtMoney(data.lastPrice)}`;
 
+  // priceAsOf is non-null whenever this response exists at all
+  // (TickerAggregateResponse's own javadoc) -- the honest "how stale is
+  // this actually" signal backlog #87's redesign added, since the price
+  // above is now routinely from an earlier window's fallback, not always
+  // this window's own live tick.
+  const priceFresh = isFresh(data.priceAsOf, data.windowStart);
+  t.els.priceAsOf.textContent = priceFresh ? `live · ${fmtAge(data.priceAsOf)}` : `as of ${fmtAge(data.priceAsOf)}`;
+  t.els.priceAsOf.className = "asof-badge " + (priceFresh ? "fresh" : "stale");
+
   if (data.avgSentiment === null || data.avgSentiment === undefined) {
     // Real, common state (aggregator's own TickerAggregateResponse
-    // javadoc: null when no news.sentiment.scored event landed for this
-    // ticker in the current window, since news is sparse relative to
-    // price ticks) -- rendered honestly as "no data", never coerced to
-    // 0, which would misrepresent an actually-neutral score as "no
-    // data" happened to compute.
+    // javadoc: null when no sentiment has ever been seen for this
+    // ticker at all, since news is sparse relative to price ticks) --
+    // rendered honestly as "no data", never coerced to 0, which would
+    // misrepresent an actually-neutral score as "no data" happened to
+    // compute.
     t.els.sentimentBadge.textContent = "no sentiment data";
     t.els.sentimentBadge.className = "sentiment-badge unknown";
-    t.els.sentimentDetail.textContent = "this window";
+    t.els.sentimentDetail.textContent = "none seen yet";
   } else {
     const bucket = sentimentBucket(data.avgSentiment);
     t.els.sentimentBadge.textContent = `${bucket} (${data.avgSentiment.toFixed(2)})`;
     t.els.sentimentBadge.className = "sentiment-badge " + bucket;
     const n = data.sentimentSampleCount;
-    t.els.sentimentDetail.textContent = `from ${n} article${n === 1 ? "" : "s"} this window`;
+    const sentimentFresh = isFresh(data.sentimentAsOf, data.windowStart);
+    const freshnessWord = sentimentFresh ? "live" : "as of";
+    t.els.sentimentDetail.textContent =
+        `from ${n} article${n === 1 ? "" : "s"} · ${freshnessWord} ${fmtAge(data.sentimentAsOf)}`;
   }
 
   // Append to this session's own trend buffer -- see HISTORY_MAX_POINTS'
