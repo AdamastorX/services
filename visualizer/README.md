@@ -14,8 +14,16 @@ No backend of its own: plain HTML/CSS/JS, served by nginx, polling
 (scoped to this origin only — see
 `platform/kubernetes/aggregator/ingress.yaml`). Chart.js loads from a
 CDN in the visitor's own browser. No mocked or bundled data — every
-number shown is whatever `aggregator`'s current 15-minute tumbling
-window actually holds right now.
+number shown is `aggregator`'s real best-known price/sentiment for
+that ticker (backlog #87's "latest known state" redesign,
+`services#56`): the current window's data when it has any, otherwise
+the most recently known value regardless of age, with an honest
+`priceAsOf`/`sentimentAsOf` freshness time shown under each figure — a
+live (green) value landed in the current window; an as-of (amber) one
+is real data, just older than that. Found live 2026-08-05: before this
+redesign, opening this page outside real market hours or between
+tumbling-window rollovers routinely showed empty cards even though
+`aggregator` had perfectly good recent data — this is the fix.
 
 **The price/sentiment trend lines are built client-side, not read from
 history the server has.** `aggregator`'s `GET /aggregates` is
@@ -27,14 +35,15 @@ reflects this browser tab's own session and resets on reload — stated
 here plainly, the same honesty discipline every other real/no-mock
 claim in this project uses.
 
-**Both "no data yet" states are real and rendered honestly, not as an
+**Both "no data" states are real and rendered honestly, not as an
 error or a zero:**
-- A ticker with no price tick in the current window (market closed,
-  window just rolled over) shows "No price data yet for TICKER this
+- A ticker with no price tick ever seen since `aggregator`'s process
+  started (rare now — the redesign above turned this from the common
+  case into a real edge case) shows "No price data yet for TICKER this
   window."
-- A ticker with a price but no scored news this window (news is
-  sparser than ticks) shows "no sentiment data" instead of a fabricated
-  neutral/zero score.
+- A ticker with a price but no scored news ever (news is sparser than
+  ticks) shows "no sentiment data" instead of a fabricated neutral/zero
+  score.
 
 ## Local development
 
