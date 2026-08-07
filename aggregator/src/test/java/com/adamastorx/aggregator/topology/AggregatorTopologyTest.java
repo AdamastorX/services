@@ -6,6 +6,7 @@ import com.adamastorx.aggregator.config.AggregatorProperties;
 import com.adamastorx.aggregator.sentiment.SentimentScoredEvent;
 import com.adamastorx.aggregator.tick.StockPriceTick;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -97,7 +98,7 @@ class AggregatorTopologyTest {
     @BeforeEach
     void setUp() {
         StreamsBuilder builder = new StreamsBuilder();
-        AggregatorTopology.build(builder, properties);
+        AggregatorTopology.build(builder, properties, new SimpleMeterRegistry());
         Topology topology = builder.build();
 
         Properties props = new Properties();
@@ -135,7 +136,8 @@ class AggregatorTopologyTest {
     private byte[] tick(String ticker, String price) throws Exception {
         try (JsonSerializer<StockPriceTick> serializer = new JsonSerializer<>(objectMapper)) {
             return serializer.serialize(
-                    properties.stockPriceTickTopic(), new StockPriceTick(ticker, new BigDecimal(price)));
+                    properties.stockPriceTickTopic(),
+                    new StockPriceTick(ticker, new BigDecimal(price), Instant.now(), "WEBSOCKET"));
         }
     }
 

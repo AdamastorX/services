@@ -3,6 +3,7 @@ package com.adamastorx.marketdata.finnhub;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.adamastorx.marketdata.tick.StockPriceTick;
+import com.adamastorx.marketdata.tick.TickSource;
 import com.sun.net.httpserver.HttpServer;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
@@ -171,6 +172,11 @@ class FinnhubQuotePollerIntegrationTest {
             // null, was chosen.
             assertThat(aaplTick.volume()).isEqualByComparingTo(BigDecimal.ZERO);
             assertThat(aaplTick.exchangeTimestamp()).isEqualTo(Instant.ofEpochSecond(1690000000L));
+            // backlog #91: this path's whole reason to exist is a
+            // by-design ~30-minute lag a freshness SLI must not alert on
+            // -- proves the field a downstream consumer needs to tell it
+            // apart from a real-time websocket tick is actually set.
+            assertThat(aaplTick.source()).isEqualTo(TickSource.POLL_FALLBACK);
         } finally {
             consumer.close();
         }

@@ -26,6 +26,15 @@ import java.time.Instant;
  *     consumer (or a human during this item's own live verification) prove
  *     the AC's "under 2s receipt-to-publish" bound without trusting a
  *     single number alone
+ * @param source which real path produced this tick (backlog #91) -- the
+ *     websocket path or the 30-minute REST-poll fallback ({@code
+ *     FinnhubQuotePoller}), so a downstream freshness SLI can measure
+ *     against real-time ticks only, not the fallback's own by-design lag
  */
 public record StockPriceTick(
-        String ticker, BigDecimal price, BigDecimal volume, Instant exchangeTimestamp, Instant ingestionTimestamp) {}
+        String ticker,
+        BigDecimal price,
+        BigDecimal volume,
+        Instant exchangeTimestamp,
+        Instant ingestionTimestamp,
+        TickSource source) {}

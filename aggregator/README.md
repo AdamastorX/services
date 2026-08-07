@@ -46,20 +46,23 @@ usability.
 This service's own consumer-side records
 (`tick/StockPriceTick.java`, `sentiment/SentimentScoredEvent.java`) are
 deliberately narrower than the real producers' own records -- only the
-fields the windowed aggregation actually needs (`ticker`+`price`,
-`ticker`+`score`).
+fields this service actually needs (`ticker`+`price` for the windowed
+aggregation, plus `exchangeTimestamp`+`source` since backlog #91,
+`ticker`+`score` for sentiment).
 
-**`stock.price.tick`'s `Instant` fields were empirically verified this
-session**, not assumed: a standalone check using the exact dependency
-versions and serializer construction `StockPriceTickProducerConfig` uses
-(plain `spring-kafka` `JsonSerializer<T>`, `jackson-datatype-jsr310` on
-the classpath, `spring.json.add.type.headers=false`) showed `Instant`
-fields serialize as a JSON **number**: epoch seconds with a fractional-
+**`stock.price.tick`'s `Instant` fields were empirically verified, not
+assumed**: a standalone check using the exact dependency versions and
+serializer construction `StockPriceTickProducerConfig` uses (plain
+`spring-kafka` `JsonSerializer<T>`, `jackson-datatype-jsr310` on the
+classpath, `spring.json.add.type.headers=false`) showed `Instant` fields
+serialize as a JSON **number**: epoch seconds with a fractional-
 nanosecond component (e.g. `1785767400.123456789`), not an ISO-8601
-string. This service doesn't need to parse those fields at all (see
-"Windowing on Kafka's own record timestamp" below), so this finding
-matters only as a fact recorded for whoever builds the next consumer of
-that topic, not as something this service depends on.
+string. **This finding stopped being merely recorded-for-later and
+became load-bearing the moment backlog #91 added `exchangeTimestamp` to
+this class's own record** -- `StockPriceTickWireCompatibilityTest`
+deserializes a literal payload in this exact numeric shape through this
+service's own `JsonSerde` construction as a regression guard, not an
+assumption carried forward unchecked.
 
 `news.sentiment.scored`'s `articlePublishedAt`/`scoredAt` fields are
 similarly not parsed here, sidestepping `sentiment-analyzer`'s own

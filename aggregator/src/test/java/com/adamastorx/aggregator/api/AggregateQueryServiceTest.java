@@ -111,8 +111,9 @@ class AggregateQueryServiceTest {
 
     private void produceTick(String ticker, String price, Instant timestamp) throws Exception {
         try (JsonSerializer<StockPriceTick> serializer = new JsonSerializer<>(objectMapper)) {
-            byte[] value =
-                    serializer.serialize(properties.stockPriceTickTopic(), new StockPriceTick(ticker, new BigDecimal(price)));
+            byte[] value = serializer.serialize(
+                    properties.stockPriceTickTopic(),
+                    new StockPriceTick(ticker, new BigDecimal(price), timestamp, "WEBSOCKET"));
             producer()
                     .send(new ProducerRecord<>(
                             properties.stockPriceTickTopic(), null, timestamp.toEpochMilli(), ticker, value))

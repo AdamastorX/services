@@ -9,6 +9,7 @@ import com.adamastorx.aggregator.topology.AggregatorTopology;
 import com.adamastorx.aggregator.topology.PriceWindowAggregate;
 import com.adamastorx.aggregator.topology.SentimentWindowAggregate;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
@@ -236,7 +237,7 @@ class StateStoreRecoveryTest {
 
     private Topology buildTopology(AggregatorProperties properties) {
         StreamsBuilder builder = new StreamsBuilder();
-        AggregatorTopology.build(builder, properties);
+        AggregatorTopology.build(builder, properties, new SimpleMeterRegistry());
         return builder.build();
     }
 
@@ -270,7 +271,8 @@ class StateStoreRecoveryTest {
                 for (int i = 0; i < ticksPerTicker; i++) {
                     price = price.add(BigDecimal.ONE);
                     byte[] value = tickSerializer.serialize(
-                            properties.stockPriceTickTopic(), new StockPriceTick(ticker, price));
+                            properties.stockPriceTickTopic(),
+                            new StockPriceTick(ticker, price, Instant.now(), "WEBSOCKET"));
                     producer.send(new ProducerRecord<>(
                                     properties.stockPriceTickTopic(), null, baseMs + i, ticker, value))
                             .get();
