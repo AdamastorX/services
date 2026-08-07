@@ -26,6 +26,7 @@ import time
 
 from confluent_kafka import Consumer, Producer
 from confluent_kafka.admin import AdminClient, NewTopic
+from prometheus_client import generate_latest
 
 from app.kafka_consumer import SentimentConsumerWorker
 from app.kafka_producer import SentimentEventProducer
@@ -160,5 +161,67 @@ def test_negative_headline_produces_negative_sign_event(kafka_bootstrap_servers)
         event = events[0]
         assert event["ticker"] == "TSLA"
         assert event["score"] < 0, f"expected negative score, got {event['score']}"
+    finally:
+        worker.stop()
+
+
+def test_consumer_lag_gauge_populated_from_real_librdkafka_stats_cb(kafka_bootstrap_servers):
+    """backlog #90: sentiment_analyzer_consumer_lag has to come from
+    librdkafka's own real statistics, not a value this test fabricates
+    -- so this drives a real produce, a real consumer lagging behind it
+    by construction (the message is produced *before* the worker
+    starts), and waits for librdkafka's own stats_cb to fire and set
+    the gauge, then reads it back through the same generate_latest()
+    scrape path Prometheus itself would hit (test_metrics.py's own
+    precedent in clinvar-service), not by reaching into the Gauge
+    object directly.
+    """
+    _ensure_topics(kafka_bootstrap_servers)
+    topic = ARTICLE_TOPIC
+
+    # Produced before the worker (and therefore its consumer group)
+    # exists -- guarantees a real, non-zero lag for librdkafka to
+    # actually report on the first stats tick, rather than a lag of 0
+    # that wouldn't distinguish "the gauge works" from "the gauge is
+    # stuck at its default".
+    _produce_article(
+        kafka_bootstrap_servers,
+        {
+            "tickers": ["MSFT"],
+            "headline": "Microsoft Reports Steady Cloud Growth",
+            "source": "wsj-markets",
+            "publishedAt": "2026-08-06T12:00:00Z",
+            "link": "https://example.com/story/lag-test",
+            "guid": "IT-TEST-LAG-0001",
+        },
+    )
+
+    worker = SentimentConsumerWorker(
+        bootstrap_servers=kafka_bootstrap_servers,
+        consume_topic=topic,
+        group_id=f"sentiment-analyzer-lag-test-{time.time_ns()}",
+        producer=SentimentEventProducer(kafka_bootstrap_servers, SCORED_TOPIC),
+        scorer=VaderScorer(),
+        poll_timeout_s=0.5,
+        # Real, fast stats_cb interval for this test only -- the
+        # production default (15s) would make this test slow for no
+        # extra confidence; librdkafka's own stats_cb mechanism is what
+        # is under test, not the specific interval value.
+        stats_interval_ms=500,
+    )
+    worker.start()
+    try:
+        deadline = time.monotonic() + 15.0
+        body = ""
+        while time.monotonic() < deadline:
+            body = generate_latest().decode()
+            if "sentiment_analyzer_consumer_lag" in body and 'partition="0"' in body:
+                break
+            time.sleep(0.5)
+
+        assert "sentiment_analyzer_consumer_lag" in body, (
+            f"expected a real sentiment_analyzer_consumer_lag sample from librdkafka's own stats_cb "
+            f"within 15s, got none. Full scrape:\n{body}"
+        )
     finally:
         worker.stop()

@@ -26,6 +26,7 @@ defaulting to whatever's already in the codebase).
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from datetime import datetime, timezone
@@ -37,6 +38,7 @@ from app.kafka_producer import SentimentEventProducer
 from app.metrics import (
     ARTICLES_CONSUMED_TOTAL,
     CONSUME_ERRORS_TOTAL,
+    CONSUMER_LAG,
     EVENTS_PUBLISHED_TOTAL,
     PUBLISH_ERRORS_TOTAL,
     SCORING_DURATION_SECONDS,
@@ -72,6 +74,17 @@ class SentimentConsumerWorker:
         producer: SentimentEventProducer,
         scorer: VaderScorer,
         poll_timeout_s: float = 1.0,
+        # backlog #90: 15s matches this project's other near-real-time
+        # scrape/poll cadences (news-ingestor's own 5-minute feed poll
+        # is a different, much coarser cadence for a different reason)
+        # -- frequent enough for a consumer-lag alert to have real
+        # signal, not so frequent it adds meaningful librdkafka-internal
+        # overhead for a single-partition topic. A real constructor
+        # parameter (not a fixed literal) specifically so
+        # test_consumer_lag_gauge_populated_from_real_librdkafka_stats_cb
+        # doesn't have to wait out the full production interval for a
+        # real stats_cb tick.
+        stats_interval_ms: int = 15000,
     ) -> None:
         self._consumer = Consumer(
             {
@@ -79,6 +92,8 @@ class SentimentConsumerWorker:
                 "group.id": group_id,
                 "auto.offset.reset": "earliest",
                 "enable.auto.commit": False,
+                "statistics.interval.ms": stats_interval_ms,
+                "stats_cb": self._on_stats,
             }
         )
         self._consume_topic = consume_topic
@@ -103,6 +118,37 @@ class SentimentConsumerWorker:
         if self._thread is not None:
             self._thread.join(timeout=timeout_s)
         self._consumer.close()
+
+    def _on_stats(self, stats_json: str) -> None:
+        """librdkafka's own `statistics.interval.ms` callback (backlog
+        #90) -- real per-partition lag, computed by librdkafka itself
+        from the broker's own high-watermark vs. this consumer's last
+        committed offset, not derived independently here. Real JSON
+        shape (librdkafka's STATISTICS.md): `topics.<topic>.partitions`
+        is a dict keyed by partition id *plus* a synthetic `"-1"` entry
+        that is librdkafka's own cross-partition aggregate row, not a
+        real partition -- skipped here, or `sentiment_analyzer_consumer_lag`
+        would double-count every real partition's lag into a bogus
+        extra series. `consumer_lag` is `-1` (librdkafka's own "not yet
+        computed" sentinel, real for the first few seconds after
+        (re)connect) until the first real fetch response lands --
+        normalized to `0` rather than published as a literal negative
+        lag value (see metrics.py's own comment on `CONSUMER_LAG`).
+        Never raises out into librdkafka's C callback path: a malformed
+        or unexpected stats payload is logged and skipped, since a
+        broken metrics gauge is not worth risking the actual consumer
+        loop over.
+        """
+        try:
+            stats = json.loads(stats_json)
+            topic_stats = stats.get("topics", {}).get(self._consume_topic, {})
+            for partition_id, partition_stats in topic_stats.get("partitions", {}).items():
+                if partition_id == "-1":
+                    continue
+                lag = partition_stats.get("consumer_lag", -1)
+                CONSUMER_LAG.labels(partition=partition_id).set(max(lag, 0))
+        except Exception:
+            logger.warning("Failed to parse librdkafka stats payload for consumer lag, skipping", exc_info=True)
 
     def is_alive(self) -> bool:
         """Real liveness signal for `GET /healthz` (`app/routes/health.py`)

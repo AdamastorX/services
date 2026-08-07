@@ -20,7 +20,7 @@ mode.
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 ARTICLES_CONSUMED_TOTAL = Counter(
     "sentiment_analyzer_articles_consumed_total",
@@ -48,10 +48,31 @@ SCORING_DURATION_SECONDS = Histogram(
     "Wall-clock time for one VADER compound-score computation over a single headline.",
 )
 
+# backlog #90 (ADR 0031, M15): consumer lag had no metric at all before
+# this -- unlike the Java side (aggregator/workers), where Micrometer's
+# KafkaStreamsMetrics/KafkaClientMetrics binders expose records-lag for
+# free, confluent-kafka's Python client has no automatic Prometheus
+# export. librdkafka (the C library confluent-kafka wraps) computes real
+# per-partition lag internally and reports it through its own
+# `statistics.interval.ms`/`stats_cb` mechanism (see
+# app/kafka_consumer.py's `_on_stats`) -- this Gauge is fed from that,
+# not derived independently, so it reflects the exact same lag
+# librdkafka itself tracks. `-1` (librdkafka's own "not yet computed"
+# sentinel, real during the first few seconds after a (re)connect) is
+# normalized to `0` here rather than published as a literal negative
+# lag value on the wire, which PromQL would otherwise read as real
+# negative lag.
+CONSUMER_LAG = Gauge(
+    "sentiment_analyzer_consumer_lag",
+    "Per-partition consumer lag for news.article.published, sourced from librdkafka's real stats_cb.",
+    ["partition"],
+)
+
 __all__ = [
     "ARTICLES_CONSUMED_TOTAL",
     "EVENTS_PUBLISHED_TOTAL",
     "PUBLISH_ERRORS_TOTAL",
     "CONSUME_ERRORS_TOTAL",
     "SCORING_DURATION_SECONDS",
+    "CONSUMER_LAG",
 ]
