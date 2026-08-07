@@ -132,6 +132,19 @@ public final class AggregatorTopology {
                 .publishPercentileHistogram();
 
         Serde<String> keySerde = Serdes.String();
+        // Real, empirically-confirmed finding (backlog #91, CI's own real
+        // test run, not assumed): adding `exchangeTimestamp` here failed
+        // with InvalidDefinitionException on the very first real publish
+        // attempt -- the exact same uncertainty SentimentScoredEvent's own
+        // javadoc already named, confirmed real here, not hypothetical.
+        // Root cause: `jackson-datatype-jsr310` was simply missing from
+        // this module's own pom.xml (present in market-data-ingestor's and
+        // news-ingestor's, whose own StockPriceTick/wire-shape records
+        // already carry java.time fields). Fixed there, not here --
+        // spring-kafka's JsonSerde's default construction auto-registers
+        // any Jackson module found on the classpath via ServiceLoader
+        // (see pom.xml's own comment), so no custom ObjectMapper wiring is
+        // needed once the dependency is actually present.
         Serde<StockPriceTick> tickSerde =
                 new JsonSerde<>(StockPriceTick.class).noTypeInfo().ignoreTypeHeaders();
         Serde<SentimentScoredEvent> sentimentSerde =
