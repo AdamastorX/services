@@ -104,15 +104,15 @@
     <!--
       backlog #91: StockPriceTick gained a java.time.Instant field
       (exchangeTimestamp) that classic Jackson 2's ObjectMapper cannot
-      serialize/deserialize on its own -- found live via this module's
-      own CI run (InvalidDefinitionException), not assumed. Same real
-      gap market-data-ingestor's own pom.xml already documents and
-      fixes this exact way: spring-kafka's JsonSerde's no-arg
-      constructor builds its ObjectMapper via
-      JacksonUtils.enhancedObjectMapper(), which auto-registers any
-      Jackson module found on the classpath via ServiceLoader, so
-      simply adding this dependency (no extra registration code in
-      AggregatorTopology) is enough once it's present.
+      serialize/deserialize on its own, found live via this module's own
+      CI run (InvalidDefinitionException), not assumed. Same real gap
+      market-data-ingestor's own pom.xml already documents and fixes
+      this exact way: spring-kafka's JsonSerde's no-arg constructor
+      builds its ObjectMapper via JacksonUtils.enhancedObjectMapper(),
+      which auto-registers any Jackson module found on the classpath
+      via ServiceLoader, so simply adding this dependency (no extra
+      registration code in AggregatorTopology) is enough once it's
+      present.
     -->
     <dependency>
       <groupId>com.fasterxml.jackson.datatype</groupId>
