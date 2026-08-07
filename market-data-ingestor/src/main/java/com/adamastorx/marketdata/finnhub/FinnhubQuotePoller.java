@@ -3,6 +3,7 @@ package com.adamastorx.marketdata.finnhub;
 import com.adamastorx.marketdata.tick.MarketDataProperties;
 import com.adamastorx.marketdata.tick.StockPriceTick;
 import com.adamastorx.marketdata.tick.StockPriceTickPublisher;
+import com.adamastorx.marketdata.tick.TickSource;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.math.BigDecimal;
@@ -157,7 +158,8 @@ public class FinnhubQuotePoller {
                     // not null, was chosen.
                     BigDecimal.ZERO,
                     Instant.ofEpochSecond(quote.epochSeconds()),
-                    ingestionTimestamp);
+                    ingestionTimestamp,
+                    TickSource.POLL_FALLBACK);
             publisher.publish(tick);
             pollSucceededCounter.increment();
             ticksPublishedCounter.increment();

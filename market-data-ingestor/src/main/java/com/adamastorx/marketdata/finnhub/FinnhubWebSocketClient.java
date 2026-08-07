@@ -4,6 +4,7 @@ import com.adamastorx.marketdata.observability.StaleFeedMetrics;
 import com.adamastorx.marketdata.tick.MarketDataProperties;
 import com.adamastorx.marketdata.tick.StockPriceTick;
 import com.adamastorx.marketdata.tick.StockPriceTickPublisher;
+import com.adamastorx.marketdata.tick.TickSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -255,7 +256,12 @@ public class FinnhubWebSocketClient {
         for (FinnhubTrade trade : message.data()) {
             Instant exchangeTimestamp = Instant.ofEpochMilli(trade.epochMillis());
             StockPriceTick tick = new StockPriceTick(
-                    trade.symbol(), trade.price(), trade.volume(), exchangeTimestamp, ingestionTimestamp);
+                    trade.symbol(),
+                    trade.price(),
+                    trade.volume(),
+                    exchangeTimestamp,
+                    ingestionTimestamp,
+                    TickSource.WEBSOCKET);
             staleFeedMetrics.recordTick(trade.symbol(), ingestionTimestamp);
             publisher.publish(tick);
         }

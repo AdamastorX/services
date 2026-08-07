@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.adamastorx.aggregator.config.AggregatorProperties;
 import com.adamastorx.aggregator.topology.AggregatorTopology;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -124,7 +125,7 @@ class KafkaStreamsLivenessHealthIndicatorTest {
                 List.of("AAPL"));
 
         StreamsBuilder builder = new StreamsBuilder();
-        AggregatorTopology.build(builder, properties);
+        AggregatorTopology.build(builder, properties, new SimpleMeterRegistry());
         Topology topology = builder.build();
 
         String applicationId = "aggregator-liveness-test-running-" + UUID.randomUUID();

@@ -46,8 +46,9 @@ import org.springframework.kafka.config.StreamsBuilderFactoryBeanConfigurer;
 public class AggregatorStreamsConfig {
 
     @Bean
-    public KStream<String, StockPriceTick> aggregatorTopology(StreamsBuilder streamsBuilder, AggregatorProperties properties) {
-        return AggregatorTopology.build(streamsBuilder, properties);
+    public KStream<String, StockPriceTick> aggregatorTopology(
+            StreamsBuilder streamsBuilder, AggregatorProperties properties, MeterRegistry meterRegistry) {
+        return AggregatorTopology.build(streamsBuilder, properties, meterRegistry);
     }
 
     /**

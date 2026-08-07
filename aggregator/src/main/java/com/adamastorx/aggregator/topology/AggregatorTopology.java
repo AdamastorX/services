@@ -3,6 +3,10 @@ package com.adamastorx.aggregator.topology;
 import com.adamastorx.aggregator.config.AggregatorProperties;
 import com.adamastorx.aggregator.sentiment.SentimentScoredEvent;
 import com.adamastorx.aggregator.tick.StockPriceTick;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import java.time.Duration;
+import java.time.Instant;
 import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
@@ -98,7 +102,35 @@ public final class AggregatorTopology {
 
     private AggregatorTopology() {}
 
-    public static KStream<String, StockPriceTick> build(StreamsBuilder builder, AggregatorProperties props) {
+    public static KStream<String, StockPriceTick> build(
+            StreamsBuilder builder, AggregatorProperties props, MeterRegistry meterRegistry) {
+        // backlog #91: the real end-to-end freshness SLI -- Finnhub trade
+        // timestamp to "processed by this topology," which is what makes
+        // the value visible via GET /aggregates a moment later. Recorded
+        // as each tick is actually processed, not computed at query time,
+        // so the metric reflects real processing lag even when nobody is
+        // calling the API right now. Tagged by `source`, not blended into
+        // one line: `market-data-ingestor`'s 30-minute REST-poll fallback
+        // publishes onto this same topic in this same shape, by design,
+        // specifically to cover gaps -- a real trap found during roadmap
+        // review before this was built (see this item's own backlog
+        // entry). The Prometheus alert built on this metric filters to
+        // source="WEBSOCKET" only; the fallback's own health is already
+        // covered by market-data-ingestor's own
+        // market_data_quote_poll_succeeded_total/ticks_published_total
+        // counters, not by this metric.
+        // Name has no "_seconds" suffix -- Micrometer's Prometheus registry
+        // appends the base unit automatically (same convention this
+        // module's own aggregator_state_restore_duration and
+        // market-data-ingestor's market_data_tick_publish_latency already
+        // use); baking "_seconds" in here would double it to
+        // "..._seconds_seconds" on the real scrape, a real naming bug
+        // caught before it ever reached CI or the live cluster.
+        Timer.Builder freshnessTimerBuilder = Timer.builder("aggregator_price_freshness")
+                .description("Time from a real trade's exchange timestamp to this topology processing the "
+                        + "resulting stock.price.tick record (backlog #91)")
+                .publishPercentileHistogram();
+
         Serde<String> keySerde = Serdes.String();
         Serde<StockPriceTick> tickSerde =
                 new JsonSerde<>(StockPriceTick.class).noTypeInfo().ignoreTypeHeaders();
@@ -115,7 +147,17 @@ public final class AggregatorTopology {
         TimeWindows windows = TimeWindows.ofSizeAndGrace(props.window(), props.grace());
 
         KStream<String, StockPriceTick> ticks =
-                builder.stream(props.stockPriceTickTopic(), Consumed.with(keySerde, tickSerde));
+                builder.stream(props.stockPriceTickTopic(), Consumed.with(keySerde, tickSerde))
+                        .peek((ticker, tick) -> {
+                            if (tick.exchangeTimestamp() == null || tick.source() == null) {
+                                return; // defensive: a malformed/legacy-shaped record, not this topology's job to fix
+                            }
+                            Duration lag = Duration.between(tick.exchangeTimestamp(), Instant.now());
+                            freshnessTimerBuilder
+                                    .tag("source", tick.source())
+                                    .register(meterRegistry)
+                                    .record(lag);
+                        });
         ticks.groupByKey(Grouped.with(keySerde, tickSerde))
                 .windowedBy(windows)
                 .aggregate(

@@ -76,7 +76,8 @@ class StockPriceTickPublisherIntegrationTest {
                 new BigDecimal("123.45"),
                 new BigDecimal("10"),
                 ingestionTimestamp.minusSeconds(1),
-                ingestionTimestamp);
+                ingestionTimestamp,
+                TickSource.WEBSOCKET);
 
         publisher.publish(tick);
 
