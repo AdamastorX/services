@@ -12,12 +12,14 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -154,13 +156,24 @@ class FinnhubQuotePollerIntegrationTest {
         try {
             quotePoller.pollAllTickers();
 
-            ConsumerRecords<String, StockPriceTick> records =
-                    KafkaTestUtils.getRecords(consumer, Duration.ofSeconds(10));
+            // backlog #110: KafkaTestUtils.getRecords does a single poll()
+            // and returns whatever landed in that one batch -- it does
+            // not guarantee waiting for all 4 expected records, which
+            // under real CI resource contention let 4 real async ticks
+            // (each its own HTTP call + Kafka publish) land across
+            // multiple poll batches while the test only read the first
+            // one (confirmed live: a real, reproduced CI failure,
+            // "expected: 4 but was: 3"). drainRecords accumulates across
+            // polls until either the expected count is reached or the
+            // deadline elapses, the same shape sentiment-analyzer's own
+            // _drain_scored_events test helper already uses for exactly
+            // this reason.
+            List<ConsumerRecord<String, StockPriceTick>> records = drainRecords(consumer, 4, Duration.ofSeconds(10));
 
             // 5 watchlisted tickers (app.market-data.tickers), TSLA's real
             // quote call fails (500) -- 4 real ticks published, not a
             // crashed cycle producing 0.
-            assertThat(records.count()).isEqualTo(4);
+            assertThat(records).hasSize(4);
             Map<String, StockPriceTick> byTicker = new HashMap<>();
             records.forEach(record -> byTicker.put(record.key(), record.value()));
             assertThat(byTicker.keySet()).containsExactlyInAnyOrder("AAPL", "MSFT", "GOOGL", "AMZN");
@@ -224,5 +237,16 @@ class FinnhubQuotePollerIntegrationTest {
         var consumer = factory.createConsumer();
         embeddedKafkaBroker.consumeFromAnEmbeddedTopic(consumer, "stock.price.tick");
         return consumer;
+    }
+
+    /** backlog #110: see the real call site's own comment for why this replaces {@code KafkaTestUtils.getRecords}. */
+    private List<ConsumerRecord<String, StockPriceTick>> drainRecords(
+            Consumer<String, StockPriceTick> consumer, int expectedCount, Duration timeout) {
+        List<ConsumerRecord<String, StockPriceTick>> collected = new ArrayList<>();
+        Instant deadline = Instant.now().plus(timeout);
+        while (collected.size() < expectedCount && Instant.now().isBefore(deadline)) {
+            consumer.poll(Duration.ofMillis(500)).forEach(collected::add);
+        }
+        return collected;
     }
 }
