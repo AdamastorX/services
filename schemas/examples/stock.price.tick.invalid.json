@@ -1,0 +1,8 @@
+{
+  "ticker": "AAPL",
+  "price": 213.14,
+  "volume": 100,
+  "exchangeTimestamp": 1785767400.123456789,
+  "ingestionTimestamp": 1785767401.5,
+  "source": "STREAMING"
+}

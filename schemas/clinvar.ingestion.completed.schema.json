@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AdamastorX/services/schemas/clinvar.ingestion.completed.schema.json",
+  "title": "clinvar.ingestion.completed",
+  "description": "Producer: clinvar-service (app/kafka_producer.py's IngestionCompletedEvent, ADR 0019). newReleaseId replaces ADR 0018's original releaseId field name for symmetry with previousReleaseId; changedKeys is the ADR 0019 addition that lets api invalidate its cache without re-reading a tabix file itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["newReleaseId", "previousReleaseId", "publishedDate", "variantCount", "ingestedAt", "changedKeys"],
+  "properties": {
+    "newReleaseId": { "type": "string", "format": "uuid" },
+    "previousReleaseId": { "type": ["string", "null"], "format": "uuid" },
+    "publishedDate": { "type": "string" },
+    "variantCount": { "type": "integer", "minimum": 0 },
+    "ingestedAt": { "type": "string" },
+    "changedKeys": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

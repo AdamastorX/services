@@ -1,0 +1,8 @@
+{
+  "tickers": ["AAPL", "MSFT"],
+  "headline": "Tech stocks rally on strong earnings",
+  "source": "wsj-markets",
+  "publishedAt": 1785767400,
+  "link": "https://www.wsj.com/markets/example-article",
+  "guid": "wsj-2026-08-07-example"
+}

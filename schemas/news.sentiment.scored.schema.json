@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AdamastorX/services/schemas/news.sentiment.scored.schema.json",
+  "title": "news.sentiment.scored",
+  "description": "Producer: sentiment-analyzer (app/events.py's SentimentScoredEvent, backlog #80). One event per (article, ticker) pair. articlePublishedAt is an echoed pass-through of news.article.published's own publishedAt, same unresolved number-or-string ambiguity as that schema, not independently resolved here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticker", "score", "headline", "source", "articlePublishedAt", "link", "guid", "scoredAt"],
+  "properties": {
+    "ticker": { "type": "string", "minLength": 1 },
+    "score": { "type": "number", "minimum": -1, "maximum": 1 },
+    "headline": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "enum": ["wsj-markets", "marketwatch"] },
+    "articlePublishedAt": { "type": ["number", "string"] },
+    "link": { "type": "string", "format": "uri" },
+    "guid": { "type": "string", "minLength": 1 },
+    "scoredAt": { "type": "string", "format": "date-time" }
+  }
+}
