@@ -29,6 +29,23 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        # Backlog #86(c): a real, permanently-poisoned Kafka producer
+        # (see KafkaProducerLivenessHealthIndicator's own javadoc) stayed
+        # 1/1 Running/Healthy for over two days with nothing publishing --
+        # the exact silent-but-Healthy shape #85(b) already fixed for
+        # aggregator's Kafka Streams client, same answer here. Setting
+        # this group at all fully replaces Boot's own default liveness
+        # membership (confirmed against the real spring-boot-health jar,
+        # same finding aggregator's own application.yml already
+        # documents), which is why livenessState is listed explicitly
+        # alongside kafkaProducer, not dropped. readiness is left
+        # untouched -- this is a liveness-only signal, not a "should this
+        # pod receive traffic" question.
+        liveness:
+          include:
+            - livenessState
+            - kafkaProducer
   metrics:
     distribution:
       percentiles-histogram:
