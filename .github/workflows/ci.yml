@@ -395,8 +395,40 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
 
+  event_contracts:
+    # backlog #96: every topic's real wire shape validated against a
+    # checked-in JSON Schema -- a golden example must pass, a
+    # deliberately-broken example (a real, plausible drift shape: a
+    # renamed field, an out-of-range value, a stale enum) must fail.
+    # See schemas/README.md and scripts/validate_contracts.py's own
+    # module docstring for why JSON Schema over Apicurio/Confluent
+    # Schema Registry.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install jsonschema
+        run: pip install jsonschema
+
+      - name: Validate event contracts
+        run: python3 scripts/validate_contracts.py
+
   ci:
-    needs: [build, scan, clinvar_service, sentiment_analyzer, workload_generator, clinvar_viewer, visualizer]
+    needs:
+      [
+        build,
+        scan,
+        clinvar_service,
+        sentiment_analyzer,
+        workload_generator,
+        clinvar_viewer,
+        visualizer,
+        event_contracts,
+      ]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -408,7 +440,8 @@ jobs:
             || [ "${{ needs.sentiment_analyzer.result }}" != "success" ] \
             || [ "${{ needs.workload_generator.result }}" != "success" ] \
             || [ "${{ needs.clinvar_viewer.result }}" != "success" ] \
-            || [ "${{ needs.visualizer.result }}" != "success" ]; then
+            || [ "${{ needs.visualizer.result }}" != "success" ] \
+            || [ "${{ needs.event_contracts.result }}" != "success" ]; then
             echo "One or more jobs failed:"
             echo "  build:              ${{ needs.build.result }}"
             echo "  scan:               ${{ needs.scan.result }}"
@@ -417,6 +450,7 @@ jobs:
             echo "  workload_generator: ${{ needs.workload_generator.result }}"
             echo "  clinvar_viewer:     ${{ needs.clinvar_viewer.result }}"
             echo "  visualizer:         ${{ needs.visualizer.result }}"
+            echo "  event_contracts:    ${{ needs.event_contracts.result }}"
             exit 1
           fi
           echo "All jobs succeeded."

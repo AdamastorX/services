@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AdamastorX/services/schemas/stock.price.tick.schema.json",
+  "title": "stock.price.tick",
+  "description": "Producer: market-data-ingestor (StockPriceTick.java, backlog #78/#91). exchangeTimestamp/ingestionTimestamp are classic-Jackson-2 Instant encoding: epoch seconds as a JSON number, optionally with a fractional-nanosecond component -- confirmed live against the real spring-kafka JsonSerializer construction (market-data-ingestor/README.md), not assumed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticker", "price", "volume", "exchangeTimestamp", "ingestionTimestamp", "source"],
+  "properties": {
+    "ticker": { "type": "string", "minLength": 1 },
+    "price": { "type": "number", "exclusiveMinimum": 0 },
+    "volume": { "type": "number", "minimum": 0 },
+    "exchangeTimestamp": { "type": "number" },
+    "ingestionTimestamp": { "type": "number" },
+    "source": { "type": "string", "enum": ["WEBSOCKET", "POLL_FALLBACK"] }
+  }
+}

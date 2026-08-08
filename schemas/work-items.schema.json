@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AdamastorX/services/schemas/work-items.schema.json",
+  "title": "work-items",
+  "description": "Producer: api (WorkItem.java, ADR 0011/ADR 0026's outbox-table-plus-relay). Deliberately a two-field scaffold, not a real domain object -- see WorkItem.java's own javadoc.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "message"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "message": { "type": "string" }
+  }
+}

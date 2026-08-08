@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AdamastorX/services/schemas/news.article.published.schema.json",
+  "title": "news.article.published",
+  "description": "Producer: news-ingestor (ArticlePublishedEvent.java, backlog #79). publishedAt's real wire encoding was never independently re-verified against a live producer (sentiment-analyzer/app/events.py's own docstring states this honestly, backlog #96) -- accepting both a JSON number (an Instant encoded as epoch time) and a string (an ISO-8601 encoding) is the schema's own honest reflection of that unresolved ambiguity, not an assumption either way.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tickers", "headline", "source", "publishedAt", "link", "guid"],
+  "properties": {
+    "tickers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "headline": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "enum": ["wsj-markets", "marketwatch"] },
+    "publishedAt": { "type": ["number", "string"] },
+    "link": { "type": "string", "format": "uri" },
+    "guid": { "type": "string", "minLength": 1 }
+  }
+}
