@@ -24,6 +24,23 @@
 const API_BASE = "https://api.local.adamastorx.test";
 const API_KEY = typeof ADAMASTORX_API_KEY !== "undefined" ? ADAMASTORX_API_KEY : null;
 
+// backlog #103 (ADR 0037): same config.js/typeof-guard shape as
+// API_KEY above -- Faro's collector URL is deploy-time config, not a
+// build-time const, since it's new as of this item like API_KEY was
+// for backlog #56. Guarded on GrafanaFaroWebSdk too: if the CDN script
+// ever fails to load, the page still works, it just isn't
+// instrumented.
+const DEFAULT_FARO_URL = "https://faro.local.adamastorx.test/collect";
+const FARO_URL =
+  typeof ADAMASTORX_FARO_URL !== "undefined" && ADAMASTORX_FARO_URL ? ADAMASTORX_FARO_URL : DEFAULT_FARO_URL;
+if (typeof GrafanaFaroWebSdk !== "undefined") {
+  GrafanaFaroWebSdk.initializeFaro({
+    url: FARO_URL,
+    app: { name: "clinvar-viewer", version: "1.0.0" },
+    instrumentations: [...GrafanaFaroWebSdk.getWebInstrumentations()],
+  });
+}
+
 function authHeaders(extra = {}) {
   const headers = { ...extra };
   if (API_KEY) {

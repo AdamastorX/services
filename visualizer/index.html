@@ -61,6 +61,11 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <!-- backlog #103 (ADR 0037): same "no build step, no bundler" CDN
+       shape as Chart.js above. Loaded before app.js so
+       GrafanaFaroWebSdk exists when app.js's own typeof guard checks
+       for it. -->
+  <script src="https://cdn.jsdelivr.net/npm/@grafana/faro-web-sdk@2.9.0/dist/bundle/faro-web-sdk.iife.js"></script>
   <!-- backlog #82: config.js is deploy-time-mounted, same mechanism
        clinvar-viewer already established (backlog #56) -- a Secret
        volume-mounted over this exact filename at container start, not

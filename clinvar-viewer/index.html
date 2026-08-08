@@ -67,14 +67,20 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/igv@2.15.11/dist/igv.min.js"></script>
-  <!-- backlog #56: defines ADAMASTORX_API_KEY. Mounted from the
+  <!-- backlog #103 (ADR 0037): same "no build step, no bundler" CDN
+       shape as igv.js above. Loaded before app.js so
+       GrafanaFaroWebSdk exists when app.js's own typeof guard checks
+       for it. -->
+  <script src="https://cdn.jsdelivr.net/npm/@grafana/faro-web-sdk@2.9.0/dist/bundle/faro-web-sdk.iife.js"></script>
+  <!-- backlog #56/#103: defines ADAMASTORX_API_KEY and (as of #103,
+       ADR 0037) ADAMASTORX_FARO_URL. Mounted from the
        clinvar-viewer-api-key Secret at deploy time (not baked into the
        image) -- see platform/kubernetes/clinvar-viewer/deployment.yaml.
-       Loaded before app.js so ADAMASTORX_API_KEY exists when app.js
-       evaluates its top-level `const API_KEY = ...` line. If the
-       Secret/volume mount is ever missing, nginx 404s this file and
-       app.js's `typeof ADAMASTORX_API_KEY !== "undefined"` guard falls
-       back to null rather than throwing a ReferenceError. -->
+       Loaded before app.js so both globals exist when app.js evaluates
+       its top-level consts. If the Secret/volume mount is ever
+       missing, nginx 404s this file and app.js's `typeof` guards fall
+       back to null/a hardcoded default rather than throwing a
+       ReferenceError. -->
   <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
