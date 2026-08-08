@@ -10,6 +10,31 @@ topic; a `workers` replica consumes it and logs it
 this is the project's Kafka delivery-guarantee exercise, not a real domain
 feature.
 
+## Deliberate, not a placeholder waiting to be filled (backlog #106)
+
+A log-only handler could read as an unfinished consumer — it isn't one.
+`workers` has quietly become load-bearing test infrastructure for two
+other real, shipped pieces of this project, and log-only is exactly what
+each of them needs to stay a clean, isolated exercise:
+
+- **KEDA's own scaling target** (backlog #63) — `ScaledObject` scales
+  `workers` on real Kafka consumer-group lag. A handler that did real
+  work (a DB write, a downstream call) would couple scaling behavior to
+  that work's own latency/failure characteristics, muddying whether a
+  scale event is really about lag or about something workers' own
+  business logic did. Log-only keeps the scaling signal isolated to the
+  one thing this exercise is actually about: consumer lag itself.
+- **`WorkersConsumerLagHigh`/`WorkersConsumerMissing`'s own subject**
+  (backlog #21/#76) — same reasoning: these alerts exist to prove the
+  Kafka delivery-guarantee and autoscaling story, not to also carry the
+  correctness risk of a real domain feature.
+
+If a real domain feature for `workers` to own ever becomes a genuine
+project need, it gets its own new consumer (a fresh Kafka Streams app or
+listener, ADR 0011's own precedent for `aggregator`), not a retrofit onto
+this one — keeping this exercise's own signal clean is worth more than
+saving one new component later.
+
 ## Wire contract
 
 Producer (`api.workitem.WorkItem`) and consumer (`workers.workitem.WorkItem`)
