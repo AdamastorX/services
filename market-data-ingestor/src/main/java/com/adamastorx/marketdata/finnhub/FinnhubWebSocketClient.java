@@ -20,6 +20,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,12 +91,43 @@ public class FinnhubWebSocketClient {
     private final StaleFeedMetrics staleFeedMetrics;
     private final Counter reconnectCounter;
     private final Counter connectFailureCounter;
+    private final Counter rateLimitedCounter;
 
     private final AtomicReference<WebSocket> activeSocket = new AtomicReference<>();
     private final AtomicBoolean connecting = new AtomicBoolean(false);
     private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
     private final AtomicReference<Instant> lastFrameReceivedAt = new AtomicReference<>(Instant.now());
     private final StringBuilder messageBuffer = new StringBuilder();
+
+    /**
+     * Backlog #115: found live -- this session's own repeated pod
+     * restarts (each one reconnecting to Finnhub from scratch) tripped a
+     * real Finnhub-side {@code HTTP 429} on the websocket upgrade
+     * handshake, and this class's own fixed, non-growing {@code
+     * reconnectDelay()} kept re-triggering the same rate limit before its
+     * window could lapse -- a real, self-perpetuating lockout, live
+     * evidence over several minutes: {@code
+     * market_data_websocket_connect_failures_total} climbed from 0 to
+     * 285+ with no sign of clearing. Tracks consecutive reconnect
+     * failures since the last real successful connection; drives {@link
+     * #nextReconnectDelay}'s exponential growth. Reset to 0 on a real
+     * successful connect and on an explicit human-triggered {@link
+     * #forceReconnect()} -- neither is a real failure this backoff
+     * should be penalizing.
+     */
+    private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
+
+    /** Real cap so a persistent outage still retries periodically rather than backing off forever. */
+    private static final Duration MAX_RECONNECT_DELAY = Duration.ofMinutes(5);
+
+    /**
+     * A real {@code HTTP 429} is a different failure class from an
+     * ordinary transient network blip -- it's the far end explicitly
+     * saying "slow down," so it jumps the backoff state ahead by several
+     * steps immediately rather than growing from the same base delay
+     * every other failure does.
+     */
+    static final int RATE_LIMIT_FAILURE_PENALTY = 4;
 
     /**
      * Test/CI seam, not a documented operational knob (kept out of {@link
@@ -131,6 +163,11 @@ public class FinnhubWebSocketClient {
         this.connectFailureCounter = Counter.builder("market_data_websocket_connect_failures_total")
                 .description("Failed attempts to establish the Finnhub websocket connection")
                 .register(meterRegistry);
+        this.rateLimitedCounter = Counter.builder("market_data_websocket_rate_limited_total")
+                .description("Real HTTP 429 responses from Finnhub on the websocket upgrade handshake "
+                        + "(backlog #115) -- a subset of connect-failures specifically caused by rate limiting, "
+                        + "not a generic network blip")
+                .register(meterRegistry);
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -162,7 +199,11 @@ public class FinnhubWebSocketClient {
         }
         log.warn("force-reconnect requested -- aborting the live Finnhub websocket connection");
         webSocket.abort();
-        scheduleReconnect();
+        // An explicit, human-triggered reconnect is not a real failure --
+        // reset the backoff state so this always uses the base delay,
+        // not an inherited penalty from unrelated past failures (backlog #115).
+        consecutiveFailures.set(0);
+        scheduleReconnect(false);
     }
 
     private void connect() {
@@ -179,9 +220,14 @@ public class FinnhubWebSocketClient {
                     if (error != null) {
                         connectFailureCounter.increment();
                         log.warn("Finnhub websocket connect failed", error);
-                        scheduleReconnect();
+                        boolean rateLimited = isRateLimited(error);
+                        if (rateLimited) {
+                            rateLimitedCounter.increment();
+                        }
+                        scheduleReconnect(rateLimited);
                         return;
                     }
+                    consecutiveFailures.set(0);
                     lastFrameReceivedAt.set(Instant.now());
                     activeSocket.set(webSocket);
                     reconnectCounter.increment();
@@ -196,11 +242,65 @@ public class FinnhubWebSocketClient {
         }
     }
 
+    /**
+     * Backlog #115: the JDK's own real {@code HTTP 429} signal for a
+     * rejected websocket upgrade ({@code
+     * jdk.internal.net.http.websocket.CheckFailedException}) lives in a
+     * {@code jdk.internal.*} package -- not part of the public API, not
+     * catchable by type from application code. Its message text
+     * ("Unexpected HTTP response status code 429", confirmed against the
+     * real exception this project's own live incident produced) is the
+     * only accessible signal, so this walks the real cause chain looking
+     * for it rather than pattern-matching a public exception type that
+     * doesn't exist for this case.
+     */
+    static boolean isRateLimited(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            String message = cause.getMessage();
+            if (message != null && message.contains("429")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void scheduleReconnect() {
+        scheduleReconnect(false);
+    }
+
+    private void scheduleReconnect(boolean rateLimited) {
         if (shuttingDown.get()) {
             return;
         }
-        scheduler.schedule(this::connect, finnhubProperties.reconnectDelay().toMillis(), TimeUnit.MILLISECONDS);
+        int failures = rateLimited
+                ? consecutiveFailures.addAndGet(RATE_LIMIT_FAILURE_PENALTY)
+                : consecutiveFailures.incrementAndGet();
+        Duration delay = nextReconnectDelay(finnhubProperties.reconnectDelay(), failures);
+        if (rateLimited) {
+            log.warn(
+                    "Finnhub rejected the websocket upgrade with a real HTTP 429 (rate limited) -- "
+                            + "backing off {}s instead of the usual reconnect delay",
+                    delay.toSeconds());
+        }
+        scheduler.schedule(this::connect, delay.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Real exponential backoff, capped at {@link #MAX_RECONNECT_DELAY} --
+     * backlog #115's real fix for the self-perpetuating lockout a flat
+     * {@code reconnectDelay()} allowed: {@code
+     * market_data_websocket_connect_failures_total} climbed from 0 to
+     * 285+ with no growth, because every retry re-triggered the same
+     * rate-limit window before it could lapse. The exponent is capped at
+     * 8 (256x the base delay) purely to keep the shift arithmetic
+     * bounded -- {@link #MAX_RECONNECT_DELAY} is what actually caps the
+     * real delay long before that exponent would matter.
+     */
+    static Duration nextReconnectDelay(Duration baseDelay, int consecutiveFailureCount) {
+        long baseMillis = baseDelay.toMillis();
+        int cappedExponent = Math.min(consecutiveFailureCount, 8);
+        long backoffMillis = baseMillis * (1L << cappedExponent);
+        return Duration.ofMillis(Math.min(backoffMillis, MAX_RECONNECT_DELAY.toMillis()));
     }
 
     private void watchdog() {
