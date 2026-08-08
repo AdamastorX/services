@@ -26,6 +26,23 @@ const API_BASE =
   typeof ADAMASTORX_API_BASE !== "undefined" && ADAMASTORX_API_BASE ? ADAMASTORX_API_BASE : DEFAULT_API_BASE;
 const API_KEY = typeof ADAMASTORX_API_KEY !== "undefined" ? ADAMASTORX_API_KEY : null;
 
+// backlog #103 (ADR 0037): same config.js/typeof-guard shape as
+// API_BASE above -- Faro's collector URL is deploy-time config, not a
+// build-time const. Guarded on GrafanaFaroWebSdk too: if the CDN
+// script ever fails to load, the page still works, it just isn't
+// instrumented -- RUM is additive, never a hard dependency for a
+// static page whose actual job is showing the chart.
+const DEFAULT_FARO_URL = "https://faro.local.adamastorx.test/collect";
+const FARO_URL =
+  typeof ADAMASTORX_FARO_URL !== "undefined" && ADAMASTORX_FARO_URL ? ADAMASTORX_FARO_URL : DEFAULT_FARO_URL;
+if (typeof GrafanaFaroWebSdk !== "undefined") {
+  GrafanaFaroWebSdk.initializeFaro({
+    url: FARO_URL,
+    app: { name: "visualizer", version: "1.0.0" },
+    instrumentations: [...GrafanaFaroWebSdk.getWebInstrumentations()],
+  });
+}
+
 function authHeaders(extra = {}) {
   const headers = { ...extra };
   if (API_KEY) {
