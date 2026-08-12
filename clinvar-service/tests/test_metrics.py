@@ -15,6 +15,8 @@ this same pytest session touch the same global registry.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -348,7 +350,7 @@ def test_metrics_endpoint_exposes_all_four_new_metrics(client):
         assert metric_name in body
 
 
-def test_ingestion_jobs_total_every_status_exists_before_any_real_job_runs(client):
+def test_ingestion_jobs_total_every_status_exists_before_any_real_job_runs():
     """Real, live incident (backlog #122): prometheus_client only exposes a
     labeled Counter child in /metrics after its first .inc() call -- a
     freshly-started process that has never had a job reach
@@ -356,14 +358,41 @@ def test_ingestion_jobs_total_every_status_exists_before_any_real_job_runs(clien
     ClinVarIngestionFreshnessBreach's own increase(...[8d]) < 1 query then
     has no real 0 baseline to compare against once the first real success
     happens: the series is born already at 1, and increase() over any
-    window correctly reports zero *change* within it -- confirmed live,
-    this kept the alert firing 30+ minutes after a real successful
-    ingestion. app/metrics.py zero-initializes every real status value at
-    import time specifically so this can't recur; this test proves that
-    happened, checking the real /metrics text a scrape would see (this
-    module's own established style), not prometheus_client's internals.
+    window correctly reports zero *change* within it. Confirmed live: the
+    counter has stayed flat at 1 with no earlier 0 sample ever recorded
+    (checked directly via Prometheus's own query_range API), and the alert
+    has not self-cleared at all since (see backlog #122 for the current
+    duration -- deliberately not restated here, since it only grows while
+    this stays open). app/metrics.py zero-initializes every real status
+    value at import time specifically so this can't recur.
+
+    This uses a real, separate subprocess rather than the shared `client`
+    fixture: every other test in this module runs real ingestions against
+    the same process-global registry (app/metrics.py's own docstring), so
+    by the time a same-process test runs, status="succeeded"/"failed" would
+    already exist from those real calls regardless of whether the zero-init
+    fix is present or not -- that would make this test pass even against a
+    reverted fix, proving nothing. A fresh subprocess that imports only
+    app.metrics, with no ingestion code ever executed, is the only way to
+    genuinely observe "before any real job runs".
     """
-    body = client.get("/metrics").text
+    root = Path(__file__).parent.parent
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import app.metrics\n"
+            "from prometheus_client import REGISTRY, generate_latest\n"
+            "import sys\n"
+            "sys.stdout.write(generate_latest(REGISTRY).decode())\n",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    body = result.stdout
 
     for status in ("succeeded", "failed", "cancelled"):
         assert f'clinvar_ingestion_jobs_total{{status="{status}"}}' in body

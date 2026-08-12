@@ -44,8 +44,11 @@ metric surface that incident needed, per ADR 0020:
   started process that has never yet had a real success omits
   ``status="succeeded"`` from ``/metrics`` entirely rather than reporting
   it as ``0``, leaving ``increase()`` with no real baseline sample once
-  the first success finally happens -- confirmed live to keep the alert
-  firing 30+ minutes after a real, successful ingestion.
+  the first success finally happens -- confirmed live: the counter has
+  stayed flat at ``1`` with no earlier ``0`` sample ever recorded
+  (checked directly via Prometheus's ``query_range`` API), and the alert
+  has not self-cleared since (backlog #122 has the current duration --
+  not restated here, since it only grows while this stays open).
 
 A single module-level registration (the process default
 ``prometheus_client.REGISTRY``) rather than a custom ``CollectorRegistry``
@@ -97,8 +100,10 @@ INGESTION_JOBS_TOTAL = Counter(
 # first real success finally happens: the series is born already at 1,
 # increase() over any window correctly reports 0 real change within it,
 # and the alert stays firing until a *second* real success creates an
-# actual detectable rise -- confirmed live, this stayed firing 30+ minutes
-# after a real, successful ingestion. Explicit zero-init at import time
+# actual detectable rise -- confirmed live, direct query_range inspection
+# shows the counter flat at 1 with no earlier 0 sample, and the alert has
+# not self-cleared since (backlog #122 has current duration). Explicit
+# zero-init at import time
 # (a standard, documented prometheus_client pattern for exactly this
 # class of counter-freshness alert) makes every real status value exist
 # from the process's first scrape, not just whichever ones happen to have
