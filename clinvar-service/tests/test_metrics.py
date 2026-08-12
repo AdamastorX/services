@@ -346,3 +346,24 @@ def test_metrics_endpoint_exposes_all_four_new_metrics(client):
         "clinvar_lookup_duration_seconds",
     ):
         assert metric_name in body
+
+
+def test_ingestion_jobs_total_every_status_exists_before_any_real_job_runs(client):
+    """Real, live incident (backlog #122): prometheus_client only exposes a
+    labeled Counter child in /metrics after its first .inc() call -- a
+    freshly-started process that has never had a job reach
+    status="succeeded" simply omits that series, not "reports 0".
+    ClinVarIngestionFreshnessBreach's own increase(...[8d]) < 1 query then
+    has no real 0 baseline to compare against once the first real success
+    happens: the series is born already at 1, and increase() over any
+    window correctly reports zero *change* within it -- confirmed live,
+    this kept the alert firing 30+ minutes after a real successful
+    ingestion. app/metrics.py zero-initializes every real status value at
+    import time specifically so this can't recur; this test proves that
+    happened, checking the real /metrics text a scrape would see (this
+    module's own established style), not prometheus_client's internals.
+    """
+    body = client.get("/metrics").text
+
+    for status in ("succeeded", "failed", "cancelled"):
+        assert f'clinvar_ingestion_jobs_total{{status="{status}"}}' in body

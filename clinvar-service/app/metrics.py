@@ -37,7 +37,15 @@ metric surface that incident needed, per ADR 0020:
   from ``clinvar_ingestion_duration_seconds_count`` (which increments on
   both success and failure), so ``ClinVarIngestionFreshnessBreach``
   (``platform/argocd/apps/prometheus.yaml``) can key off actual job
-  outcomes instead of "an attempt happened, regardless of outcome".
+  outcomes instead of "an attempt happened, regardless of outcome". Every
+  real status value is explicitly zero-initialized below (``.inc(0)``) --
+  backlog #122's own real incident: ``prometheus_client`` only exposes a
+  labeled child series after its first real ``.inc()``, so a freshly-
+  started process that has never yet had a real success omits
+  ``status="succeeded"`` from ``/metrics`` entirely rather than reporting
+  it as ``0``, leaving ``increase()`` with no real baseline sample once
+  the first success finally happens -- confirmed live to keep the alert
+  firing 30+ minutes after a real, successful ingestion.
 
 A single module-level registration (the process default
 ``prometheus_client.REGISTRY``) rather than a custom ``CollectorRegistry``
@@ -80,6 +88,23 @@ INGESTION_JOBS_TOTAL = Counter(
     "Count of ClinVar ingestion jobs reaching a terminal state, by outcome.",
     ["status"],
 )
+# Real, live incident (backlog #122, 2026-08-12): prometheus_client only
+# exposes a labeled child series in /metrics after its first .inc() call
+# -- a freshly-started (or freshly-rebuilt) process that has never yet had
+# a job reach status="succeeded" simply omits that series entirely, not
+# "reports 0". ClinVarIngestionFreshnessBreach's own increase(...[8d]) < 1
+# query then has no real "0" baseline sample to compare against once the
+# first real success finally happens: the series is born already at 1,
+# increase() over any window correctly reports 0 real change within it,
+# and the alert stays firing until a *second* real success creates an
+# actual detectable rise -- confirmed live, this stayed firing 30+ minutes
+# after a real, successful ingestion. Explicit zero-init at import time
+# (a standard, documented prometheus_client pattern for exactly this
+# class of counter-freshness alert) makes every real status value exist
+# from the process's first scrape, not just whichever ones happen to have
+# already occurred.
+for _status in ("succeeded", "failed", "cancelled"):
+    INGESTION_JOBS_TOTAL.labels(status=_status).inc(0)
 
 __all__ = [
     "INGESTION_DURATION_SECONDS",
