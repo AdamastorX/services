@@ -18,3 +18,17 @@ python-multipart==0.0.32
 # GET /metrics (ADR 0019/0020, observability#15) -- clinvar-service's
 # first Prometheus metrics of any kind (previously OTel tracing only).
 prometheus-client==0.26.0
+# Continuous profiling (backlog #57), moved here from a runtime pip-install
+# init container (platform's deployment.yaml, backlog #122): the init
+# container's own `pip install pyroscope-io` at pod start had a real,
+# undiscovered dependency on public PyPI/Fastly egress that backlog #50's
+# later default-deny CiliumNetworkPolicy never granted -- invisible until
+# this pod's first real restart after that policy went live (2026-08-10),
+# which permanently wedged every future clinvar-service deploy in
+# Init:0/1. Baking the wheel in at build time (a real manylinux wheel,
+# no compiler needed against this same python:3.12-slim base) removes the
+# runtime public-internet dependency entirely rather than widening the
+# NetworkPolicy to a CDN-wide (Fastly) CIDR range, which would have been
+# far too broad relative to the deliberately narrow, dedicated-range NCBI
+# precedent (clinvar-service-ncbi-egress.yaml).
+pyroscope-io==1.2.1
