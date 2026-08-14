@@ -101,6 +101,26 @@ public class StaleFeedMetrics {
         return secondsSince(lastTickInstant) > properties.staleThreshold().toSeconds();
     }
 
+    /**
+     * backlog #133: lets {@link com.adamastorx.marketdata.finnhub.FinnhubWebSocketClient}'s
+     * own watchdog reuse this exact signal to self-heal (force a
+     * reconnect) before a human needs to notice the real, live
+     * {@code MarketDataStaleFeed} alert this class already drives --
+     * found live: a connection stayed technically alive (still answering
+     * protocol-level pings, the watchdog's own prior liveness check) for
+     * ~29 real hours while Finnhub stopped delivering real trade data
+     * entirely for all 5 watchlisted tickers during real US market
+     * hours, self-triggered daily reconnects never noticed because they
+     * only reset the socket, not this class's own per-ticker state.
+     * Reuses the same threshold/market-hours gating {@link #isStale}
+     * already uses for alerting, rather than a second, separately
+     * maintained staleness definition.
+     */
+    public boolean anyTickerStale() {
+        return lastTickByTicker.entrySet().stream()
+                .anyMatch(entry -> isStale(entry.getKey(), entry.getValue().get()));
+    }
+
     private double secondsSince(Instant instant) {
         return Duration.between(instant, clock.instant()).toSeconds();
     }
