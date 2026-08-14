@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.IntStream;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -46,6 +47,17 @@ class WorkItemListPaginationIntegrationTest {
 
     @Autowired
     private WorkItemJpaRepository repository;
+
+    // Both @Test methods share this class's one static @Container Postgres
+    // (Testcontainers instance, not reset between methods by
+    // @DirtiesContext -- that only resets the Spring context) -- found
+    // live in CI without this: the second test's seeded rows landed on
+    // top of the first test's, failing its own totalElements assertion
+    // against the combined count instead of its own.
+    @BeforeEach
+    void cleanSeededRows() {
+        repository.deleteAll();
+    }
 
     @Test
     void defaultPageSizeCapsAResponseThatWouldOtherwiseBeMultiplePages() {
