@@ -77,4 +77,48 @@ class StaleFeedMetricsTest {
 
         assertThat(metrics.isStale("AAPL", DURING_MARKET_HOURS)).isFalse();
     }
+
+    @Test
+    void anyTickerStaleIsTrueWhenAtLeastOneWatchlistedTickerIsStale() {
+        // backlog #133: FinnhubWebSocketClient's own watchdog reuses this
+        // signal to self-heal -- a real, live incident had a connection
+        // stay technically alive while trade data silently stopped for
+        // all 5 tickers, so this must trigger on even one stale ticker,
+        // matching the alert's own per-ticker semantics.
+        MarketDataProperties twoTickers =
+                new MarketDataProperties(List.of("AAPL", "MSFT"), "stock.price.tick", Duration.ofMinutes(5));
+        Clock clock = Clock.fixed(DURING_MARKET_HOURS, ZoneId.of("UTC"));
+        StaleFeedMetrics metrics =
+                new StaleFeedMetrics(twoTickers, marketHoursService, clock, new SimpleMeterRegistry());
+
+        metrics.recordTick("AAPL", DURING_MARKET_HOURS.minus(Duration.ofSeconds(1)));
+        metrics.recordTick("MSFT", DURING_MARKET_HOURS.minus(Duration.ofMinutes(6)));
+
+        assertThat(metrics.anyTickerStale()).isTrue();
+    }
+
+    @Test
+    void anyTickerStaleIsFalseWhenEveryWatchlistedTickerIsFresh() {
+        MarketDataProperties twoTickers =
+                new MarketDataProperties(List.of("AAPL", "MSFT"), "stock.price.tick", Duration.ofMinutes(5));
+        Clock clock = Clock.fixed(DURING_MARKET_HOURS, ZoneId.of("UTC"));
+        StaleFeedMetrics metrics =
+                new StaleFeedMetrics(twoTickers, marketHoursService, clock, new SimpleMeterRegistry());
+
+        metrics.recordTick("AAPL", DURING_MARKET_HOURS.minus(Duration.ofSeconds(1)));
+        metrics.recordTick("MSFT", DURING_MARKET_HOURS.minus(Duration.ofSeconds(2)));
+
+        assertThat(metrics.anyTickerStale()).isFalse();
+    }
+
+    @Test
+    void anyTickerStaleIsFalseAfterHoursEvenIfEveryTickerWouldOtherwiseBeStale() {
+        Clock clock = Clock.fixed(AFTER_HOURS, ZoneId.of("UTC"));
+        StaleFeedMetrics metrics =
+                new StaleFeedMetrics(properties, marketHoursService, clock, new SimpleMeterRegistry());
+
+        metrics.recordTick("AAPL", AFTER_HOURS.minus(Duration.ofHours(3)));
+
+        assertThat(metrics.anyTickerStale()).isFalse();
+    }
 }

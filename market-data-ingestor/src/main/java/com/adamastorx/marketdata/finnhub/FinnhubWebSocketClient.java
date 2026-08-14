@@ -100,6 +100,16 @@ public class FinnhubWebSocketClient {
     private final StringBuilder messageBuffer = new StringBuilder();
 
     /**
+     * backlog #133: real cooldown between stale-data-triggered
+     * reconnects, distinct from the connect-failure backoff above --
+     * these reconnects don't fail, so that exponential backoff never
+     * applies to them. Starts at {@link Instant#EPOCH} so the very first
+     * real stale condition can trigger immediately, not wait out a
+     * cooldown against a reconnect that never happened.
+     */
+    private final AtomicReference<Instant> lastStaleTriggeredReconnectAt = new AtomicReference<>(Instant.EPOCH);
+
+    /**
      * Backlog #115: found live -- this session's own repeated pod
      * restarts (each one reconnecting to Finnhub from scratch) tripped a
      * real Finnhub-side {@code HTTP 429} on the websocket upgrade
@@ -312,7 +322,28 @@ public class FinnhubWebSocketClient {
             // Already mid-reconnect via onClose/onError/connect-failure -- nothing to watch.
             return;
         }
-        Duration idle = Duration.between(lastFrameReceivedAt.get(), Instant.now());
+        Instant now = Instant.now();
+        // backlog #133: checked *before* the protocol-level idle/ping check
+        // below, because a connection can pass that check indefinitely
+        // (Finnhub's own ping frames keep lastFrameReceivedAt fresh) while
+        // never delivering a real trade -- confirmed live, ~29 real hours,
+        // all 5 watchlisted tickers, during real US market hours. Reuses
+        // StaleFeedMetrics' own already-alerting-on signal so this
+        // self-heals before a human needs to notice the MarketDataStaleFeed
+        // alert and manually force-reconnect, which is exactly how this
+        // real incident was found and fixed the first time.
+        if (shouldForceReconnectForStaleData(
+                staleFeedMetrics.anyTickerStale(), lastStaleTriggeredReconnectAt.get(), now, marketDataProperties.staleThreshold())) {
+            log.warn(
+                    "A watchlisted ticker has had no real trade during market hours past the stale threshold, "
+                            + "even though the connection itself looks alive -- forcing a reconnect to self-heal");
+            lastStaleTriggeredReconnectAt.set(now);
+            activeSocket.compareAndSet(webSocket, null);
+            webSocket.abort();
+            scheduleReconnect();
+            return;
+        }
+        Duration idle = Duration.between(lastFrameReceivedAt.get(), now);
         if (idle.compareTo(finnhubProperties.idleTimeout()) >= 0) {
             log.warn(
                     "No frame from Finnhub websocket in {}s -- treating connection as dead, forcing reconnect",
@@ -323,6 +354,32 @@ public class FinnhubWebSocketClient {
         } else if (idle.compareTo(finnhubProperties.pingInterval()) >= 0) {
             webSocket.sendPing(ByteBuffer.allocate(0));
         }
+    }
+
+    /**
+     * backlog #133: pure decision rule, tested directly against concrete
+     * inputs rather than a live websocket -- the same "extract the real
+     * rule, test it as a static method" shape {@link #nextReconnectDelay}
+     * and {@link #isRateLimited} already use in this class.
+     *
+     * <p>The cooldown exists because reconnecting doesn't retroactively
+     * un-stale a ticker's own last-real-tick timestamp: a real trade
+     * takes a few real seconds to arrive even after a healthy reconnect
+     * (confirmed live: 0-12s across all 5 tickers), so {@code
+     * anyTickerStale} would still read {@code true} on the very next 10s
+     * watchdog tick without one -- triggering unconditionally would
+     * reconnect-storm for that whole window, and forever if the real
+     * cause is upstream (a genuine Finnhub-side outage) rather than this
+     * connection's own state. {@code staleThreshold} doubles as the
+     * cooldown -- the same real cadence the threshold itself represents,
+     * not a separately tuned number.
+     */
+    static boolean shouldForceReconnectForStaleData(
+            boolean anyTickerStale, Instant lastStaleTriggeredReconnectAt, Instant now, Duration staleThreshold) {
+        if (!anyTickerStale) {
+            return false;
+        }
+        return Duration.between(lastStaleTriggeredReconnectAt, now).compareTo(staleThreshold) >= 0;
     }
 
     private void handleMessage(String rawMessage) {
