@@ -93,6 +93,26 @@ def insert_variant_index_rows(conn: Connection, rows: list[tuple[str, str, int, 
     conn.commit()
 
 
+def delete_variant_index_for_release(conn: Connection, release_id: uuid.UUID) -> int:
+    """backlog #132: cleans up whatever index rows a cancelled or
+    orphaned-by-restart job already committed for this release before it
+    was interrupted. Streaming inserts (app/ingestion.py's
+    _build_variant_index_rows, backlog #132) means index rows can now be
+    committed *before* the scan that built them finishes, unlike the
+    prior single-bulk-insert-at-the-end shape -- clinvar_variant_index's
+    own clinvar_release_id foreign key has no ON DELETE CASCADE
+    (migrations/0001), so delete_pending_release's own DELETE on
+    clinvar_release would otherwise fail with a real FK violation the
+    moment any index rows for that release exist. Must be called before
+    delete_pending_release, not after.
+    """
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM clinvar_variant_index WHERE clinvar_release_id = %s", (release_id,))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted
+
+
 def prune_variant_index_other_than(conn: Connection, release_id: uuid.UUID) -> int:
     with conn.cursor() as cur:
         cur.execute("DELETE FROM clinvar_variant_index WHERE clinvar_release_id <> %s", (release_id,))

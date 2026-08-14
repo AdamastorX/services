@@ -265,6 +265,103 @@ def test_reconcile_orphaned_jobs_marks_stale_running_job_failed_and_cleans_pendi
         assert cur.fetchone()[0] == 0
 
 
+def test_reconcile_orphaned_jobs_cleans_up_index_rows_a_streamed_scan_already_committed(db_conn):
+    """backlog #132: streaming index-row inserts (app/ingestion.py's
+    _build_variant_index_rows) mean a pod kill mid-scan can now leave
+    real, already-committed clinvar_variant_index rows behind for the
+    orphaned release -- unlike the prior single-bulk-insert-at-the-end
+    shape, where a mid-scan death left none. clinvar_variant_index's own
+    clinvar_release_id foreign key has no ON DELETE CASCADE
+    (migrations/0001), so without this cleanup, reconcile_orphaned_jobs'
+    own delete_pending_release would fail with a real FK violation the
+    moment any index rows exist for that release. Seeds real index rows
+    directly (repository.insert_variant_index_rows) rather than driving
+    an actual scan, to isolate this from the mid-scan-cancellation
+    proof below, which exercises the real streaming code path instead.
+    """
+    job_id = uuid.uuid4()
+    release_id = uuid.uuid4()
+    repository.create_queued_job(db_conn, job_id, "scheduled")
+    repository.mark_job_running(db_conn, job_id)
+    repository.insert_pending_release(
+        db_conn, release_id, "https://example.invalid/clinvar.vcf.gz", "0" * 64, __import__("datetime").date(2026, 1, 1)
+    )
+    repository.set_job_attempted_release(db_conn, job_id, release_id)
+    repository.insert_variant_index_rows(
+        db_conn, [("rs1", "1", 100, "A", "T", release_id), ("rs2", "1", 200, "C", "G", release_id)]
+    )
+
+    reconciled = ingestion.reconcile_orphaned_jobs(db_conn)
+
+    assert reconciled == [job_id]
+    job = repository.get_ingestion_job(db_conn, job_id)
+    assert job.status == "failed"
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM clinvar_release WHERE release_id = %s", (release_id,))
+        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT COUNT(*) FROM clinvar_variant_index WHERE clinvar_release_id = %s", (release_id,))
+        assert cur.fetchone()[0] == 0
+
+
+def test_cancel_mid_scan_cleans_up_index_rows_already_flushed_by_that_point(
+    db_conn, pool, refdata_paths, tmp_path, monkeypatch
+):
+    """backlog #132: proves the same cleanup via the real streaming code
+    path (not seeded directly, unlike the orphan-reconciliation test
+    above) -- a cancellation that arrives *after* at least one real
+    flush has already committed rows, but before the scan finishes, must
+    not leave those rows (or the placeholder release) behind. Forces a
+    flush after the fixture's first matching record
+    (_INDEX_FLUSH_EVERY monkeypatched to 1) and pauses the scan there so
+    cancellation can be requested against that real, already-committed
+    state, mirroring the existing download-phase cancellation test's
+    SlowDownloader/threading.Event synchronization pattern.
+    """
+    vcf_gz, tbi = _plain_bgzip_index(FIXTURES_DIR / "fixture-release-1.vcf", tmp_path / "source", "release1")
+    downloader = FakeDownloader(source_map={"u://vcf": vcf_gz, "u://tbi": tbi})
+
+    monkeypatch.setattr(ingestion, "_INDEX_FLUSH_EVERY", 1)
+    monkeypatch.setattr(ingestion, "_CANCEL_CHECK_EVERY", 1)
+
+    after_first_record = threading.Event()
+    release_remaining_records = threading.Event()
+    real_iter_records = ingestion.iter_records
+
+    def _pausing_iter_records(path):
+        records = list(real_iter_records(path))
+        for i, record in enumerate(records):
+            yield record
+            if i == 0:
+                after_first_record.set()
+                release_remaining_records.wait(timeout=10)
+
+    monkeypatch.setattr(ingestion, "iter_records", _pausing_iter_records)
+
+    job_id = ingestion.trigger_ingestion_job(pool, refdata_paths, downloader, None, "u://vcf", "u://tbi")
+
+    assert after_first_record.wait(timeout=10), "scan never reached its first-record pause point"
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM clinvar_variant_index")
+        committed_before_cancel = cur.fetchone()[0]
+    assert committed_before_cancel > 0, "expected the streaming flush to have already committed at least one row"
+
+    assert repository.request_job_cancel(db_conn, job_id) is True
+    assert ingestion.request_cancel(job_id) is True
+
+    release_remaining_records.set()
+
+    job = _wait_for_terminal(db_conn, job_id, timeout=10)
+    assert job.status == "cancelled"
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM clinvar_release")
+        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT COUNT(*) FROM clinvar_variant_index")
+        assert cur.fetchone()[0] == 0
+
+
 def test_reconcile_orphaned_jobs_is_a_noop_when_nothing_is_active(db_conn):
     assert ingestion.reconcile_orphaned_jobs(db_conn) == []
 

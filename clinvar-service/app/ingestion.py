@@ -56,6 +56,16 @@ _PROGRESS_LOG_EVERY = 250_000
 # Checked more often than the progress log line so a cancel request is
 # responsive without the overhead of checking on every single record.
 _CANCEL_CHECK_EVERY = 10_000
+# backlog #132: how many index rows _build_variant_index_rows holds in
+# memory before flushing to Postgres, instead of the whole real run's
+# ~2.9M rows at once (the dominant contributor to the 767-906MiB peaks
+# that repeatedly OOM'd this pod under real node-wide memory pressure --
+# backlog #131/ADR 0041). Larger than repository.py's own _BATCH_SIZE
+# (1000, the executemany chunk size for a single INSERT) so this doesn't
+# multiply real commit round-trips by 2900x for no memory benefit --
+# insert_variant_index_rows still sub-chunks each flush into 1000-row
+# executemany calls internally, this only changes how often it's called.
+_INDEX_FLUSH_EVERY = 20_000
 
 # job_id -> a live cancellation signal, but only for a job whose
 # background execution is running in *this* process. Populated for the
@@ -106,34 +116,53 @@ def _check_cancelled(cancel_event: threading.Event | None, job_id: uuid.UUID, wh
 
 
 def _build_variant_index_rows(
+    conn: Connection,
     vcf_path: Path,
     release_id: uuid.UUID,
     job_id: uuid.UUID,
     progress_cb=None,
     cancel_event: threading.Event | None = None,
-) -> tuple[list[tuple[str, str, int, str, str, uuid.UUID]], int]:
+) -> int:
     """Only variants that carry an RS (dbSNP rs-number) are indexed -- this
     table exists specifically to make rsID lookups possible; a variant with
     no rsID is only ever reachable via the coordinate-based lookup path.
-    Returns (rows, total_records_scanned).
+    Returns total_records_scanned.
 
-    ``progress_cb(total, len(rows))``, if given, is called at the exact
-    same 250k-record checkpoint the log line already uses (backlog #54's
-    own AC: reuse the existing progress logging, don't invent a second
+    backlog #132: streams rows into ``clinvar_variant_index`` in bounded
+    ``_INDEX_FLUSH_EVERY``-sized batches as the VCF is scanned, rather than
+    accumulating a real run's entire ~2.9M index rows as Python tuples
+    before a single bulk insert at the end -- confirmed the dominant
+    contributor to this job's real peak memory (this function's own prior
+    shape), which repeatedly OOM'd this pod under real node-wide memory
+    pressure (backlog #131/ADR 0041) even after its container's own
+    memory limit was raised and never came close to being hit. Peak
+    memory is now bounded by the flush size, not the real dataset size.
+    Safe against ``activate_release``'s own separate commit below: reader
+    visibility is gated by ``clinvar_release.is_active`` staying false
+    until that call, not by whether index rows were committed in one
+    shot or many (ADR 0018's ordering guarantee, unchanged) -- inserting
+    in batches never exposes a half-built index to a real reader.
+
+    ``progress_cb(total, built)``, if given, is called at the exact same
+    250k-record checkpoint the log line already uses (backlog #54's own
+    AC: reuse the existing progress logging, don't invent a second
     mechanism) -- this is what lets ``GET .../ingest/{job_id}`` report
-    real progress instead of only "running".
+    real progress instead of only "running". ``built`` is a running
+    total across every flush so far, not just the current in-flight
+    batch, so this is unaffected by streaming.
     """
     logger.info("Scanning %s for variant index rows (job %s)", vcf_path, job_id)
-    rows: list[tuple[str, str, int, str, str, uuid.UUID]] = []
+    batch: list[tuple[str, str, int, str, str, uuid.UUID]] = []
     total = 0
+    built = 0
     for record in iter_records(vcf_path):
         total += 1
         if cancel_event is not None and total % _CANCEL_CHECK_EVERY == 0 and cancel_event.is_set():
             raise ClinVarIngestionCancelled(f"Ingestion job {job_id} cancelled after {total} records scanned")
         if total % _PROGRESS_LOG_EVERY == 0:
-            logger.info("Scanned %s records so far (%s index rows built)", total, len(rows))
+            logger.info("Scanned %s records so far (%s index rows built)", total, built)
             if progress_cb is not None:
-                progress_cb(total, len(rows))
+                progress_cb(total, built)
         rs_values = record.info.get("RS")
         if not rs_values:
             continue
@@ -143,11 +172,17 @@ def _build_variant_index_rows(
         for alt in record.alts:
             for raw_rs in rs_ids:
                 rsid = raw_rs if raw_rs.lower().startswith("rs") else f"rs{raw_rs}"
-                rows.append((rsid, record.chrom, record.pos, record.ref, alt, release_id))
-    logger.info("Finished scanning %s: %s records, %s index rows", vcf_path, total, len(rows))
+                batch.append((rsid, record.chrom, record.pos, record.ref, alt, release_id))
+                built += 1
+                if len(batch) >= _INDEX_FLUSH_EVERY:
+                    repository.insert_variant_index_rows(conn, batch)
+                    batch = []
+    if batch:
+        repository.insert_variant_index_rows(conn, batch)
+    logger.info("Finished scanning %s: %s records, %s index rows", vcf_path, total, built)
     if progress_cb is not None:
-        progress_cb(total, len(rows))
-    return rows, total
+        progress_cb(total, built)
+    return total
 
 
 def _reserve_job(conn: Connection, trigger: str) -> uuid.UUID:
@@ -327,6 +362,14 @@ def reconcile_orphaned_jobs(conn: Connection) -> list[uuid.UUID]:
         repository.mark_job_failed(conn, job.job_id, reason)
         INGESTION_JOBS_TOTAL.labels(status="failed").inc()
         if job.release_id is not None:
+            # backlog #132: streaming inserts mean a restart mid-scan can
+            # now leave real, committed index rows behind for this
+            # release (unlike the prior single-bulk-insert-at-the-end
+            # shape, where a mid-scan death left none) -- clinvar_release_id's
+            # FK has no ON DELETE CASCADE, so these must be cleaned up
+            # before delete_pending_release's own DELETE on clinvar_release,
+            # or that DELETE fails on a real FK violation.
+            repository.delete_variant_index_for_release(conn, job.release_id)
             # Cleans up the placeholder clinvar_release row this job's
             # insert_pending_release() already committed before the
             # restart interrupted it -- guarded by is_active=false inside
@@ -386,7 +429,8 @@ def _do_ingest(
     repository.set_job_attempted_release(conn, job_id, release_id)
 
     try:
-        rows, variant_count = _build_variant_index_rows(
+        variant_count = _build_variant_index_rows(
+            conn,
             vcf_path,
             release_id,
             job_id,
@@ -394,10 +438,14 @@ def _do_ingest(
             cancel_event=cancel_event,
         )
     except ClinVarIngestionCancelled:
+        # backlog #132: streaming inserts mean some index rows may already
+        # be committed for this release by the time cancellation is
+        # detected -- must be cleaned up before delete_pending_release's
+        # own DELETE on clinvar_release, or that DELETE fails on the real
+        # FK (clinvar_variant_index has no ON DELETE CASCADE).
+        repository.delete_variant_index_for_release(conn, release_id)
         repository.delete_pending_release(conn, release_id)
         raise
-
-    repository.insert_variant_index_rows(conn, rows)
 
     repository.activate_release(conn, release_id, variant_count)
 
