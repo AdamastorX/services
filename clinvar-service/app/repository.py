@@ -93,6 +93,26 @@ def insert_variant_index_rows(conn: Connection, rows: list[tuple[str, str, int, 
     conn.commit()
 
 
+def delete_variant_index_for_release(conn: Connection, release_id: uuid.UUID) -> int:
+    """backlog #132: cleans up whatever index rows a cancelled or
+    orphaned-by-restart job already committed for this release before it
+    was interrupted. Streaming inserts (app/ingestion.py's
+    _build_variant_index_rows, backlog #132) means index rows can now be
+    committed *before* the scan that built them finishes, unlike the
+    prior single-bulk-insert-at-the-end shape -- clinvar_variant_index's
+    own clinvar_release_id foreign key has no ON DELETE CASCADE
+    (migrations/0001), so delete_pending_release's own DELETE on
+    clinvar_release would otherwise fail with a real FK violation the
+    moment any index rows for that release exist. Must be called before
+    delete_pending_release, not after.
+    """
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM clinvar_variant_index WHERE clinvar_release_id = %s", (release_id,))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted
+
+
 def prune_variant_index_other_than(conn: Connection, release_id: uuid.UUID) -> int:
     with conn.cursor() as cur:
         cur.execute("DELETE FROM clinvar_variant_index WHERE clinvar_release_id <> %s", (release_id,))
@@ -111,10 +131,28 @@ def find_coordinates_by_rsid(conn: Connection, rsid: str) -> list[tuple[str, int
     non-edge-case occurrence in ClinVar's data (backlog #38) -- there is
     no ``LIMIT 1`` here on purpose. Callers must handle the multi-row
     case explicitly rather than assume a single result.
+
+    Joined against ``clinvar_release`` and filtered to ``is_active``
+    (backlog #132, found by review): without this, a lookup during a
+    live ingestion could see rows from *both* the still-active old
+    release and the not-yet-active new one simultaneously -- streaming
+    inserts (this same item) widened that window from the old
+    single-bulk-insert's low-single-digit seconds to the full scan
+    duration (minutes, at real ClinVar scale), which for an rsID whose
+    coordinates are unchanged between releases (the common case) would
+    make an unambiguous rsID look ambiguous (two rows, same real
+    coordinate, two different ``clinvar_release_id``s) and wrongly
+    trigger a 409. Scoping to the one real active release (the same
+    release readers are meant to see, ADR 0018's ordering guarantee)
+    closes this regardless of how long that window is, rather than just
+    narrowing it back down.
     """
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT chrom, pos, ref, alt, clinvar_release_id FROM clinvar_variant_index WHERE rsid = %s",
+            "SELECT vi.chrom, vi.pos, vi.ref, vi.alt, vi.clinvar_release_id "
+            "FROM clinvar_variant_index vi "
+            "JOIN clinvar_release cr ON cr.release_id = vi.clinvar_release_id "
+            "WHERE vi.rsid = %s AND cr.is_active = true",
             (rsid,),
         )
         return cur.fetchall()

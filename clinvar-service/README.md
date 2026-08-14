@@ -189,7 +189,9 @@ scheduled weekly trigger goes through the exact same job-tracked path
   actually stops the running scan (checked every 10k records inside
   `_build_variant_index_rows`, and before/after the download step) —
   not just a relabelled row. A cancelled job's abandoned placeholder
-  `clinvar_release` row is cleaned up, never left dangling.
+  `clinvar_release` row is cleaned up, never left dangling — and so is
+  any `clinvar_variant_index` row a streamed scan (backlog #132) had
+  already committed for that release before cancellation arrived.
 - **Metrics**: `clinvar_ingestion_jobs_total{status}` counts jobs
   reaching a terminal state. `status="succeeded"` is also the real
   success-only signal `ClinVarIngestionFreshnessBreach`
