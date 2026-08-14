@@ -137,11 +137,16 @@ def _build_variant_index_rows(
     pressure (backlog #131/ADR 0041) even after its container's own
     memory limit was raised and never came close to being hit. Peak
     memory is now bounded by the flush size, not the real dataset size.
-    Safe against ``activate_release``'s own separate commit below: reader
-    visibility is gated by ``clinvar_release.is_active`` staying false
-    until that call, not by whether index rows were committed in one
-    shot or many (ADR 0018's ordering guarantee, unchanged) -- inserting
-    in batches never exposes a half-built index to a real reader.
+    Safe against ``activate_release``'s own separate commit below:
+    ``current_active_release`` and ``find_coordinates_by_rsid`` (this
+    second one only after a real gap this same item found and closed --
+    see its own docstring) both gate real reader visibility on
+    ``clinvar_release.is_active`` staying false until that call, not on
+    whether index rows were committed in one shot or many (ADR 0018's
+    ordering guarantee) -- streaming inserts widens the window these
+    rows sit uncommitted-to-``is_active`` for, but doesn't change what a
+    real reader can see through it, now that both read paths are scoped
+    the same way.
 
     ``progress_cb(total, built)``, if given, is called at the exact same
     250k-record checkpoint the log line already uses (backlog #54's own

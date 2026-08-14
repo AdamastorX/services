@@ -53,3 +53,31 @@ def test_find_coordinates_by_rsid_returns_empty_list_for_unknown_rsid(db_conn):
     rows = repository.find_coordinates_by_rsid(db_conn, "rs_does_not_exist")
 
     assert rows == []
+
+
+def test_find_coordinates_by_rsid_ignores_a_not_yet_active_release(db_conn):
+    """backlog #132: streaming variant-index inserts (app/ingestion.py)
+    means real index rows for a not-yet-active release can now sit in
+    clinvar_variant_index for the full scan duration, alongside the
+    still-active previous release's own rows -- widened from the old
+    single-bulk-insert shape's low-single-digit-second window. An rsID
+    whose coordinates are unchanged between releases (the common case)
+    would otherwise look ambiguous (two rows, same real coordinate, two
+    different clinvar_release_ids) purely because of that overlap, not
+    because it's genuinely ambiguous. find_coordinates_by_rsid must only
+    ever see the one real active release, regardless of what else
+    happens to be sitting in the table -- proven here by seeding a
+    pending (is_active=false) release's row for the same rsid alongside
+    the active one, not just asserting the query text looks right.
+    """
+    active_release_id = _seed_release(db_conn)
+    repository.insert_variant_index_rows(db_conn, [("rs789", "5", 5000, "A", "G", active_release_id)])
+
+    pending_release_id = uuid.uuid4()
+    repository.insert_pending_release(db_conn, pending_release_id, "u://vcf2", "cafebabe", datetime.date(2026, 8, 1))
+    repository.insert_variant_index_rows(db_conn, [("rs789", "5", 5000, "A", "G", pending_release_id)])
+
+    rows = repository.find_coordinates_by_rsid(db_conn, "rs789")
+
+    assert len(rows) == 1
+    assert rows[0] == ("5", 5000, "A", "G", active_release_id)
