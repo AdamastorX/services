@@ -46,7 +46,7 @@ _VCF_HEADER = """##fileformat=VCFv4.1
 ##INFO=<ID=CLNSIG,Number=.,Type=String,Description="Aggregate germline classification for this single variant; multiple values are separated by a vertical bar">
 ##INFO=<ID=CLNVC,Number=1,Type=String,Description="Variant type">
 ##INFO=<ID=CLNVCSO,Number=1,Type=String,Description="Sequence Ontology id for variant type">
-##INFO=<ID=GENEINFO,Number=1,Type=String,Description="Gene(s) for the variant reported as gene symbol:gene id."
+##INFO=<ID=GENEINFO,Number=1,Type=String,Description="Gene(s) for the variant reported as gene symbol:gene id.">
 #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
 """
 

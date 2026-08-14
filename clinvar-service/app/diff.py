@@ -91,8 +91,12 @@ def compute_changed_keys(old_vcf_path: Path | None, new_vcf_path: Path) -> list[
     of ``None`` rather than the true prior value, which can produce an
     extra (never a *missed*, except in the specific case where the
     second occurrence's own classification is ``None``) changed-key
-    entry. A full sorted merge-join over both files would remove this
-    edge case entirely (and the remaining ``old`` dict), but was
+    entry -- for the same reason, a within-``new`` duplicate key can also
+    make its own ``redis_key`` appear twice in the returned list, rather
+    than once; harmless for ``api``'s cache invalidation (each entry
+    just re-deletes the same already-gone key), not a correctness
+    concern of its own. A full sorted merge-join over both files would
+    remove this edge case entirely (and the remaining ``old`` dict), but was
     assessed and deliberately not attempted in this same change: it
     requires assuming both VCFs share one consistent chromosome/contig
     sort order, which is very likely true for ClinVar's own stable
