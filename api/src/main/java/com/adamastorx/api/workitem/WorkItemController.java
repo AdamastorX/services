@@ -3,12 +3,16 @@ package com.adamastorx.api.workitem;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -28,11 +32,28 @@ import org.springframework.web.bind.annotation.RestController;
  * service also reports as an empty {@code Optional}, deliberately
  * indistinguishable from a plain miss here — see that class's javadoc)
  * reads PostgreSQL and best-effort fills the cache for next time.
- * {@code POST}/{@code GET /work-items} (the list) are untouched by this —
- * see ADR 0016 for why the per-id read was chosen and the list wasn't.
+ * {@code POST /work-items} is untouched by this — see ADR 0016 for why
+ * the per-id read was chosen for caching and the list wasn't.
+ *
+ * <p>{@code GET /work-items} (the list) is real-paginated (backlog #130)
+ * — {@code ?page}/{@code ?size} query params, a stated default page size
+ * and a hard maximum a caller cannot exceed, returned as a
+ * {@link WorkItemPage} envelope rather than a bare array so a real
+ * caller can tell whether there's more to fetch.
  */
 @RestController
 public class WorkItemController {
+
+    // backlog #130: GET /work-items had no limit at all -- a real request
+    // returned ~14MB/108,000+ rows, past blackbox-exporter's own 5s probe
+    // timeout and, confirmed live (2026-08-14, 282 real restarts over
+    // 41h), capable of OOMing a correctly-sized pod on ordinary read
+    // traffic (workload-generator's own work_item_read_weight), not just
+    // a synthetic worst case. MAX_PAGE_SIZE is a hard ceiling regardless
+    // of what a caller asks for -- a caller can't opt back into the old
+    // unbounded behavior by passing a huge ?size=.
+    private static final int DEFAULT_PAGE_SIZE = 50;
+    private static final int MAX_PAGE_SIZE = 200;
 
     private final WorkItemJpaRepository repository;
 
@@ -67,8 +88,14 @@ public class WorkItemController {
     }
 
     @GetMapping("/work-items")
-    public List<WorkItem> list() {
-        return repository.findAll().stream().map(WorkItemController::toWorkItem).toList();
+    public WorkItemPage list(
+            @RequestParam(defaultValue = "0") int page, @RequestParam(name = "size", required = false) Integer size) {
+        int pageSize = size == null ? DEFAULT_PAGE_SIZE : Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        Page<WorkItemEntity> result =
+                repository.findAll(PageRequest.of(Math.max(page, 0), pageSize, Sort.by(Sort.Direction.DESC, "createdAt")));
+        List<WorkItem> items =
+                result.getContent().stream().map(WorkItemController::toWorkItem).toList();
+        return new WorkItemPage(items, result.getNumber(), result.getSize(), result.getTotalElements(), result.getTotalPages());
     }
 
     private static WorkItem toWorkItem(WorkItemEntity entity) {
