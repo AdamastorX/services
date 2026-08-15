@@ -1,10 +1,13 @@
 package com.adamastorx.api.clinvar;
 
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.Optional;
 import java.util.function.Function;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
@@ -35,8 +38,23 @@ class ClinVarServiceClient {
 
     private final RestClient restClient;
 
+    // backlog #105: chaos scenario 2's own real Postgres-hang finding named
+    // this exact same class of gap on the api -> clinvar-service edge too --
+    // RestClient.builder() alone has no connect/read timeout at all, so a
+    // hung or unreachable clinvar-service would block a real /variants/lookup
+    // request indefinitely instead of failing fast into the 502 the catch
+    // block below already produces for every other unreachable case. Same
+    // explicit-timeout pattern already established for exactly this reason
+    // in watchlist-service's NtfyClient (found on review there, backlog
+    // #53). 2s connect / 3s read: in-cluster, should normally answer in
+    // milliseconds (a real tabix point-query) -- fast-fail, not a generous
+    // cross-internet budget.
     ClinVarServiceClient(@Value("${clinvar-service.base-url}") String clinVarServiceBaseUrl) {
-        this.restClient = RestClient.builder().baseUrl(clinVarServiceBaseUrl).build();
+        JdkClientHttpRequestFactory requestFactory =
+                new JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build());
+        requestFactory.setReadTimeout(Duration.ofSeconds(3));
+        this.restClient =
+                RestClient.builder().baseUrl(clinVarServiceBaseUrl).requestFactory(requestFactory).build();
     }
 
     /** {@code GET /internal/clinvar/lookup?chrom=...&pos=...&ref=...&alt=...} */
