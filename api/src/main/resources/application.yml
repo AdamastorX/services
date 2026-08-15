@@ -12,6 +12,16 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgresql.api.svc.cluster.local:5432/api}
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
+    hikari:
+      # backlog #105: chaos scenario 2 found a real ~30s hang before a 500
+      # (HikariCP's own default connectionTimeout) when Postgres is
+      # unreachable -- a real, user-facing hang, the Postgres-side twin
+      # of #43's Kafka finding. 3s is a real, deliberate fail-fast
+      # budget: long enough to absorb a normal, brief connection-pool
+      # contention blip (this pool's own real usage is light, ADR 0012),
+      # short enough that a genuine Postgres outage surfaces as a fast,
+      # clear 500 instead of a ~30s hang a real caller has to sit through.
+      connection-timeout: 3000
   flyway:
     # Explicit, even though Boot's autoconfiguration would default to the
     # same thing -- ADR 0012's "versioned and repeatable" AC is Flyway's
