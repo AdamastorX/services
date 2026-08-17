@@ -17,7 +17,7 @@
 #
 # Base image digest verified against the Docker Hub registry API on
 # 2026-07-27, same practice every other Dockerfile in this repo follows.
-FROM nginxinc/nginx-unprivileged:1.31.3-alpine3.24-slim@sha256:22f839c5fb4007dc24d203a170a9e03fc185d660bfefc34ac6823a7aef085cbc
+FROM nginxinc/nginx-unprivileged:1.31.3-alpine3.24-slim@sha256:d61d7ef52430df468e74ed6ee6e914429b80e20ba988e3176278a73165f876cf
 
 COPY index.html style.css app.js /usr/share/nginx/html/
 
