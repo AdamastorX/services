@@ -2,8 +2,9 @@ package com.adamastorx.watchlist.subscription;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.adamastorx.watchlist.delivery.DeliveryJpaRepository;
-import java.time.Instant;
+import com.adamastorx.watchlist.ingestion.ClinVarIngestionCompletedEvent;
+import com.adamastorx.watchlist.ingestion.DeliveryResolutionService;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -34,7 +35,7 @@ class SubscriptionControllerIntegrationTest {
     private int port;
 
     @Autowired
-    private DeliveryJpaRepository deliveryRepository;
+    private DeliveryResolutionService deliveryResolutionService;
 
     @Test
     void createsReadsAndDeletesAVariantSubscription() {
@@ -92,10 +93,17 @@ class SubscriptionControllerIntegrationTest {
 
         assertThat(created).isNotNull();
 
-        // A real delivery row, inserted the same way DeliveryResolutionService
-        // does for a real fan-out -- not a hand-rolled entity shape.
-        deliveryRepository.insertIgnoringConflict(
-                UUID.randomUUID(), created.id(), UUID.randomUUID().toString(), created.variantKey(), Instant.now());
+        // A real delivery row, via the real DeliveryResolutionService a
+        // real Kafka fan-out would actually go through (ADR 0026) --
+        // not a hand-rolled entity shape or a bare repository call
+        // outside of any transaction.
+        deliveryResolutionService.resolveAndPersist(new ClinVarIngestionCompletedEvent(
+                UUID.randomUUID().toString(),
+                null,
+                "2026-08-21",
+                1,
+                "2026-08-21T00:00:00Z",
+                List.of(created.variantKey())));
 
         client.delete()
                 .uri("/subscriptions/{id}", created.id())
