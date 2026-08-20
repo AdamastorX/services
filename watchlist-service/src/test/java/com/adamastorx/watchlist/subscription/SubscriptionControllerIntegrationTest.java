@@ -2,8 +2,12 @@ package com.adamastorx.watchlist.subscription;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.adamastorx.watchlist.delivery.DeliveryJpaRepository;
+import java.time.Instant;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -28,6 +32,9 @@ class SubscriptionControllerIntegrationTest {
 
     @LocalServerPort
     private int port;
+
+    @Autowired
+    private DeliveryJpaRepository deliveryRepository;
 
     @Test
     void createsReadsAndDeletesAVariantSubscription() {
@@ -61,6 +68,44 @@ class SubscriptionControllerIntegrationTest {
         client.delete().uri("/subscriptions/{id}", created.id()).exchange().expectStatus().isEqualTo(204);
 
         client.get().uri("/subscriptions/{id}", created.id()).exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    void deletingASubscriptionWithRealDeliveriesReturns409NotA500() {
+        // backlog #141: found live during backlog #123's acceptance
+        // walk-through -- deleting a subscription that has a real
+        // delivery row (deliveries_subscription_id_fkey) used to throw
+        // a raw DataIntegrityViolationException (HTTP 500) instead of
+        // a real, callable-facing 409.
+        RestTestClient client = RestTestClient.bindToServer().baseUrl("http://localhost:" + port).build();
+
+        Subscription created = client.post()
+                .uri("/subscriptions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("variantKey", "variantAnnotation:13:32398489:A:G"))
+                .exchange()
+                .expectStatus()
+                .isEqualTo(201)
+                .expectBody(Subscription.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertThat(created).isNotNull();
+
+        // A real delivery row, inserted the same way DeliveryResolutionService
+        // does for a real fan-out -- not a hand-rolled entity shape.
+        deliveryRepository.insertIgnoringConflict(
+                UUID.randomUUID(), created.id(), UUID.randomUUID().toString(), created.variantKey(), Instant.now());
+
+        client.delete()
+                .uri("/subscriptions/{id}", created.id())
+                .exchange()
+                .expectStatus()
+                .isEqualTo(409);
+
+        // Real, not just status-coded: the subscription is still there,
+        // not half-deleted.
+        client.get().uri("/subscriptions/{id}", created.id()).exchange().expectStatus().isOk();
     }
 
     @Test

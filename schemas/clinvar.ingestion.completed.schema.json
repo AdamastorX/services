@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/AdamastorX/services/schemas/clinvar.ingestion.completed.schema.json",
   "title": "clinvar.ingestion.completed",
-  "description": "Producer: clinvar-service (app/kafka_producer.py's IngestionCompletedEvent, ADR 0019). newReleaseId replaces ADR 0018's original releaseId field name for symmetry with previousReleaseId; changedKeys is the ADR 0019 addition that lets api invalidate its cache without re-reading a tabix file itself.",
+  "description": "Producer: clinvar-service (app/kafka_producer.py's IngestionCompletedEvent, ADR 0019). newReleaseId replaces ADR 0018's original releaseId field name for symmetry with previousReleaseId; changedKeys is the ADR 0019 addition that lets api invalidate its cache without re-reading a tabix file itself. backlog #141: changedKeys.items now has a real pattern, not just minLength -- the previous minLength-only shape let this file's own committed example drift from the real producer's actual key format (app/diff.py's _make_key, 'variantAnnotation:{chrom}:{pos}:{ref}:{alt}') for weeks with no CI check able to catch it, since any non-empty string satisfied minLength equally.",
   "type": "object",
   "additionalProperties": false,
   "required": ["newReleaseId", "previousReleaseId", "publishedDate", "variantCount", "ingestedAt", "changedKeys"],
@@ -14,7 +14,10 @@
     "ingestedAt": { "type": "string" },
     "changedKeys": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "pattern": "^variantAnnotation:[^:]+:[0-9]+:[^:]+:[^:]+$"
+      }
     }
   }
 }

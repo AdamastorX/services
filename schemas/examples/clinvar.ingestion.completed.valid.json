@@ -4,5 +4,5 @@
   "publishedDate": "2026-07-01",
   "variantCount": 4453798,
   "ingestedAt": "2026-08-07T03:12:44.001Z",
-  "changedKeys": ["17:41197588:G:A", "13:32398489:A:G"]
+  "changedKeys": ["variantAnnotation:17:41197588:G:A", "variantAnnotation:13:32398489:A:G"]
 }

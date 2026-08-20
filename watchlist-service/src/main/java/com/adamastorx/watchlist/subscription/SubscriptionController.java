@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -80,7 +81,22 @@ public class SubscriptionController {
         if (!repository.existsById(id)) {
             return ResponseEntity.notFound().build();
         }
-        repository.deleteById(id);
+        // backlog #141: real deliveries reference this row
+        // (deliveries_subscription_id_fkey) once a real fan-out has
+        // happened -- found live deleting a real test subscription
+        // during backlog #123's acceptance walk-through, a raw 500
+        // instead of a real, callable-facing 409. The delivery history
+        // is kept deliberately (it's the durable record a real
+        // notification was sent), so a subscription with real
+        // deliveries can't just be deleted out from under them.
+        try {
+            repository.deleteById(id);
+        } catch (DataIntegrityViolationException ex) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Subscription has real delivery history and cannot be deleted",
+                    ex);
+        }
         return ResponseEntity.noContent().build();
     }
 
