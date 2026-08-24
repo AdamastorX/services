@@ -424,10 +424,31 @@ public class FinnhubWebSocketClient {
         }
     }
 
-    private final class FinnhubListener implements WebSocket.Listener {
+    /**
+     * Package-private (not {@code private}) solely so {@code
+     * FinnhubWebSocketClientMessageBufferResetTest} can instantiate it
+     * directly and drive {@code onOpen}/{@code onText} against a mock
+     * {@link WebSocket} -- the same "extract/expose the real seam, test it
+     * directly rather than only through a live connection" shape this
+     * class already uses for {@link #isRateLimited}, {@link
+     * #nextReconnectDelay}, and {@link #shouldForceReconnectForStaleData}.
+     */
+    final class FinnhubListener implements WebSocket.Listener {
 
         @Override
         public void onOpen(WebSocket webSocket) {
+            // backlog #156: messageBuffer lives on the outer instance, not
+            // this listener, so it otherwise survives across reconnects --
+            // a partial frame left over from a dead prior connection (no
+            // final `last=true` fragment ever arrived to flush and clear
+            // it) would silently prefix the new connection's first
+            // message, corrupting it. onOpen fires for every new
+            // connection this class ever establishes -- the normal
+            // onClose/onError path, the watchdog's forced reconnect, and
+            // the operational forceReconnect() hook all funnel through
+            // connect() into a fresh WebSocket whose first callback is
+            // this one -- so clearing here covers all three uniformly.
+            messageBuffer.setLength(0);
             lastFrameReceivedAt.set(Instant.now());
             webSocket.request(1);
         }
