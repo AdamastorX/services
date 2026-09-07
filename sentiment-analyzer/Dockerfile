@@ -13,7 +13,7 @@
 
 # --- Build stage: install dependencies into a venv ------------------------
 # python:3.12-slim
-FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS build
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS build
 
 WORKDIR /build
 COPY requirements.txt .
@@ -32,7 +32,7 @@ RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip uninstall -y pip setuptools wheel
 
 # --- Runtime stage: slim, non-root ------------------------------------------
-FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 # Picks up any security patches published for this base image tag past
 # whatever snapshot the pinned digest above represents (same reasoning
