@@ -26,7 +26,7 @@ ARG MODULE
 
 # --- Build stage: full JDK + the repo's Maven wrapper ---------------------
 # eclipse-temurin:25-jdk
-FROM eclipse-temurin:25-jdk@sha256:c42fecf62f32725c65cfea284c012526d6fb31cc78123c740ebdc1cfd2dced12 AS build
+FROM eclipse-temurin:25-jdk@sha256:dcf835e52330939b6c9f90ecab8aafcbcaa8fbf48423db44de884cf978c10144 AS build
 ARG MODULE
 
 WORKDIR /workspace
