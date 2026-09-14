@@ -31,4 +31,4 @@ prometheus-client==0.26.0
 # NetworkPolicy to a CDN-wide (Fastly) CIDR range, which would have been
 # far too broad relative to the deliberately narrow, dedicated-range NCBI
 # precedent (clinvar-service-ncbi-egress.yaml).
-pyroscope-io==1.2.1
+pyroscope-io==1.2.3
