@@ -14,7 +14,7 @@
 # re-confirmed live against the Docker Hub registry API on 2026-08-04
 # (this PR's own session) -- still the exact same manifest-list digest
 # clinvar-viewer already pins, i.e. nothing has moved since 2026-07-27.
-FROM nginxinc/nginx-unprivileged:1.31.3-alpine3.24-slim@sha256:d61d7ef52430df468e74ed6ee6e914429b80e20ba988e3176278a73165f876cf
+FROM nginxinc/nginx-unprivileged:1.31.6-alpine3.24-slim@sha256:c81a27f28bc2d9c2da8998444e653c7b85b9bbbaa92e44ef18d8920784e06507
 
 COPY index.html style.css app.js /usr/share/nginx/html/
 
