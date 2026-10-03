@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "ralph-wiggum@claude-code-plugins": true,
+    "mattpocock-skills@mattpocock": true
+  }
+}
