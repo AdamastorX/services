@@ -4,6 +4,7 @@
 .vscode/
 target/
 .claude/worktrees/
+.claude/ralph-loop.local.md
 
 # clinvar-service (ADR 0019, Python)
 __pycache__/
