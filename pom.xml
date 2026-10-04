@@ -31,5 +31,23 @@
 
   <properties>
     <java.version>25</java.version>
+
+    <!-- Security overrides of versions Spring Boot's own BOM manages.
+         The image scan gates every PR on HIGH/CRITICAL CVEs and Boot
+         4.1.0 (and 4.1.1, which only reaches Tomcat 11.0.24 / Jackson
+         2.21.5 / 3.1.5) still ships these:
+           tomcat-embed-core 11.0.22: CVE-2026-65182, -65905, -68525
+             (CRITICAL: security-constraint / authentication bypass),
+             fixed in 11.0.25
+           jackson 2.x 2.21.4: CVE-2026-89407, -89425, -68497, -91776,
+             -91777 (HIGH), fixed in 2.21.7
+           jackson 3.x (tools.jackson) 3.1.4: same CVEs, fixed in 3.1.7
+         Property names are Boot 4.1's own (spring-boot-dependencies):
+         `jackson-2-bom.version` is the com.fasterxml 2.x line and
+         `jackson-bom.version` is the tools.jackson 3.x line. Drop each
+         override once the Boot BOM manages a version at or above it. -->
+    <tomcat.version>11.0.25</tomcat.version>
+    <jackson-2-bom.version>2.21.7</jackson-2-bom.version>
+    <jackson-bom.version>3.1.7</jackson-bom.version>
   </properties>
 </project>

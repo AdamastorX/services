@@ -16,6 +16,16 @@
 # clinvar-viewer already pins, i.e. nothing has moved since 2026-07-27.
 FROM nginxinc/nginx-unprivileged:1.31.3-alpine3.24-slim@sha256:d61d7ef52430df468e74ed6ee6e914429b80e20ba988e3176278a73165f876cf
 
+# The pinned base lags Alpine's own security fixes: the image scan gate
+# (HIGH/CRITICAL, fails the PR) found libcrypto3/libssl3 3.5.7-r0
+# (CVE-2026-14456, fixed 3.5.8-r0) and pcre2 10.47-r1 (CVE-2026-103111,
+# -86145, -89157, -89161, fixed 10.48/10.49-r0) in it. Same remedy the
+# top-level Java Dockerfile already uses: `apk upgrade` in the runtime
+# stage, then drop back to the image's own non-root user (101).
+USER root
+RUN apk upgrade --no-cache
+USER 101
+
 COPY index.html style.css app.js /usr/share/nginx/html/
 
 EXPOSE 8080
