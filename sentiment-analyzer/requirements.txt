@@ -6,7 +6,7 @@
 # second version for no reason.
 fastapi==0.140.0
 uvicorn[standard]==0.51.0
-confluent-kafka==2.15.0
+confluent-kafka==2.15.1
 # vaderSentiment (ADR 0029's own chosen scorer) -- ships its own lexicon
 # file inside the package; no model download at import or score time.
 vaderSentiment==3.3.2
