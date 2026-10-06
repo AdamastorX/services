@@ -42,6 +42,9 @@
            jackson 2.x 2.21.4: CVE-2026-89407, -89425, -68497, -91776,
              -91777 (HIGH), fixed in 2.21.7
            jackson 3.x (tools.jackson) 3.1.4: same CVEs, fixed in 3.1.7
+           spring-webmvc 7.0.8: CVE-2026-47884 (CRITICAL, remote), fixed in 7.0.9
+             (published after Boot 4.1.0/4.1.1; found 2026-10-06 when the scan
+             gate failed an unrelated PR)
            netty-handler 4.2.15 (api): CVE-2026-75595 (CRITICAL, SNI
              routing bypass via fragmented TLS ClientHello), fixed in 4.2.17
          Property names are Boot 4.1's own (spring-boot-dependencies):
@@ -52,5 +55,6 @@
     <jackson-2-bom.version>2.21.7</jackson-2-bom.version>
     <jackson-bom.version>3.1.7</jackson-bom.version>
     <netty.version>4.2.17.Final</netty.version>
+    <spring-framework.version>7.0.9</spring-framework.version>
   </properties>
 </project>
