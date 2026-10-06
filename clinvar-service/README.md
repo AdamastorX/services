@@ -106,7 +106,11 @@ it, never alter the contract.
 
 Topic `clinvar.ingestion.completed` (configurable via
 `CLINVAR_INGESTION_TOPIC`, same default). Published once per completed
-ingestion:
+ingestion (**as several events when the diff is large**: `changedKeys` is split
+across events of at most ~600 KB each, every one a complete event with the same
+release fields, so a consumer must treat each event independently and
+idempotently; `api` does, it deletes the keys it is given and keeps no
+per-release state):
 
 ```json
 {
