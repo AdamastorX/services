@@ -3,7 +3,7 @@
 # real fixture VCF and a real local Postgres) -- not a loose floor.
 fastapi==0.140.0
 uvicorn[standard]==0.51.0
-pysam==0.24.0
+pysam==0.24.1
 psycopg[binary,pool]==3.3.4
 psycopg-pool==3.3.1
 confluent-kafka==2.15.0
