@@ -73,6 +73,25 @@ WORKDIR /app
 # pre-repackage jar keeps a .jar.original suffix and does not match the glob).
 COPY --from=build /workspace/${MODULE}/target/${MODULE}-*.jar /app/app.jar
 
+# backlog #159: api's real, published, pinned Pyroscope Java agent jar
+# (grafana/pyroscope-java v2.8.0, github release asset) baked in at
+# build time instead of curl'd into an emptyDir by a runtime init
+# container on every pod (re)start (kubernetes/api/rollout.yaml) --
+# removes a standing live public-internet dependency this one service
+# otherwise has none of, and the default-deny NetworkPolicy's
+# toFQDNs/GitHub-release-asset-CDN allow that existed only to cover
+# it. Conditioned on MODULE so every other module built from this
+# shared Dockerfile gets no extra curl/layer at all -- api is still
+# the only Pyroscope-instrumented Java service (backlog #57). World-
+# readable by default (no chown needed): the file is loaded as a
+# -javaagent, never executed, so the runtime USER below only needs
+# read access, which curl's default output permissions already give it.
+RUN if [ "$MODULE" = "api" ]; then \
+      apk add --no-cache curl && \
+      curl -fsSL -o /app/pyroscope-agent.jar https://github.com/grafana/pyroscope-java/releases/download/v2.8.0/pyroscope.jar && \
+      apk del curl; \
+    fi
+
 USER 10001
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
