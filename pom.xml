@@ -57,4 +57,24 @@
     <netty.version>4.2.17.Final</netty.version>
     <spring-framework.version>7.0.9</spring-framework.version>
   </properties>
+
+  <!-- Boot's own BOM has no recognized property for this one (it's a
+       transitive dependency of kafka-clients, not something
+       spring-boot-dependencies manages), so this is a direct
+       dependencyManagement override instead of a property.
+         at.yawk.lz4:lz4-java 1.10.1 (via kafka-clients 4.2.1, every
+         Kafka-producing/consuming module): CVE-2026-106451 (HIGH,
+         arbitrary code execution via insecure temporary file handling),
+         fixed in 1.11.4 (found 2026-10-09 when the scan gate failed an
+         unrelated PR). Drop once kafka-clients ships a version that
+         already pulls 1.11.4 or newer. -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>at.yawk.lz4</groupId>
+        <artifactId>lz4-java</artifactId>
+        <version>1.11.4</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 </project>
