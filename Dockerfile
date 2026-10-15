@@ -35,7 +35,7 @@ RUN ./mvnw --batch-mode --no-transfer-progress -pl "${MODULE}" -am package -Dski
 
 # --- Runtime stage: JRE only, non-root, Alpine (no pebble) -----------------
 # eclipse-temurin:25-jre-alpine
-FROM eclipse-temurin:25-jre-alpine@sha256:28db6fdf60e38945e43d840c0333aeaec66c15943070104f7586fd3c9d1665b0
+FROM eclipse-temurin:25-jre-alpine@sha256:3c0a9084927a221ccd1d007fcaf614465672c0af37aaa834c5184483afe56d61
 ARG MODULE
 
 # This image tag's apk package snapshot (2026-06-22) lags Alpine 3.23's own
